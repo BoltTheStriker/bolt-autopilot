@@ -164,13 +164,18 @@ export function AutopilotApp() {
     };
   }, [demoRunning]);
 
-  // Keep a running bot's numbers fresh, and check often while a deposit is on its way.
+  // Keep a running bot's numbers fresh; check often while a deposit is on its way, and every few
+  // seconds while a just-started bot is finding its first traders.
   const waitingDeposit = !!sentDeposit;
+  // Started, no copies yet, and no sync since the start (after one, the dashboard says why instead).
+  const startedAt = me?.user.log.find((l) => /^(Bot switched on|Autopilot on)/.test(l.text))?.at ?? 0;
+  const syncedSinceStart = (me?.user.lastSyncAt ?? 0) > startedAt;
+  const finding = !!me && me.user.mode !== "off" && me.user.copies.length === 0 && !me.user.idle && !syncedSinceStart;
   useEffect(() => {
     if (!session || (me?.user.mode === "off" && !waitingDeposit)) return;
-    const id = setInterval(() => void refresh(session), waitingDeposit ? 15_000 : 30_000);
+    const id = setInterval(() => void refresh(session), finding ? 5_000 : waitingDeposit ? 15_000 : 30_000);
     return () => clearInterval(id);
-  }, [session, me?.user.mode, waitingDeposit, refresh]);
+  }, [session, me?.user.mode, waitingDeposit, finding, refresh]);
   useEffect(() => {
     if (!sentDeposit) return;
     // Credited (the balance went up): back to the normal flow. Not credited after 30 minutes: stop waiting (Strike's list still shows it).
@@ -319,8 +324,12 @@ export function AutopilotApp() {
       parked: me.parked ?? 0,
       earn: me.earn ?? null,
       halted: me.user.log.some((l) => /Daily loss limit/.test(l.text) && (me.user.lastSyncAt ?? 0) - l.at < 86_400_000),
+      idle:
+        me.user.mode !== "off" && me.user.copies.length === 0
+          ? (me.user.idle ?? (syncedSinceStart ? "The bot checked and hasn't started a copy yet. What it tried is under Activity; it tries again every few minutes." : null))
+          : null,
     };
-  }, [demoOn, demo, marks, me]);
+  }, [demoOn, demo, marks, me, syncedSinceStart]);
 
   // A snapshot of the result for its share card: the demo against its $1,000, a real account on its running copies.
   const shareNow = (): ShareSource | null => {

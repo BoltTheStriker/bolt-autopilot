@@ -17,7 +17,7 @@ import { applySettings, DEFAULT_SETTINGS, describeSettings, indexStep, sanitizeS
 import { StrikeClient } from "./strike-live.ts";
 import { CUP_MIN_HOLDING, cupStandings, cupToCheck, freshJoinTime, joinCup, joinMessage, oldJoinMessage, resetBlocked, resetMessage, snapshotCup } from "./cup.ts";
 import { verifySignData } from "./cose.ts";
-import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, pickTraders, realWorldShareOf, sanitizeRules, weekCurve, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
+import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, MIN_COPY_USD, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
 import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, newSession, publicUser, saveAutoStore, type AutoUser, type Mode } from "./autopilotStore.ts";
 import { parkedOf, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
@@ -601,14 +601,36 @@ const autoSpecs = (u: AutoUser) =>
   u.rules && u.mode !== "off"
     ? copySpecs(pickTraders(autoPool.filter((c) => !((u.cooldown?.[c.lead.toLowerCase()] ?? 0) > Date.now())), u.rules, Object.keys(u.managed)), u.rules, strikeSymbols)
     : [];
+/** Why a switched-on bot has nothing to copy, in the user's words (null when copies can start). */
+function idleReason(u: AutoUser): string | null {
+  if (!u.rules || u.mode === "off" || Object.keys(u.managed).length) return null;
+  if (!autoPool.length) return "Loading Strike's trader rankings. Your copies start in a few minutes.";
+  const deployed = u.rules.budgetUsd * RISK_LEVELS[u.rules.risk].deploy;
+  if (deployed < MIN_COPY_USD)
+    return `Your rules put $${deployed.toFixed(2)} to work, under the $${MIN_COPY_USD} a copy needs to follow a trader's orders. Raise the budget or the risk level to start.`;
+  if (!autoSpecs(u).length)
+    return `No ranked trader fits your rules right now (${autoPool.length} ranked). The bot checks again every few minutes; "Everything" for markets or fewer traders gives it more to pick from.`;
+  // There were picks, but Strike took none of them (the reasons are on the activity log just before this).
+  if (u.lastSyncAt) return "Strike didn't accept the copies yet (see the reasons below). The bot tries other traders every few minutes.";
+  return null;
+}
+
 let autoBusy = false;
+const autoQueued = new Set<AutoUser>(); // asked for while a sync was running: synced right after it
 async function syncAutopilot(only?: AutoUser) {
-  if (!autoOn() || autoBusy || !autoPool.length) return;
+  if (!autoOn()) return;
+  if (autoBusy) {
+    if (only) autoQueued.add(only);
+    return;
+  }
   autoBusy = true;
   try {
     for (const u of only ? [only] : Object.values(autoStore.users)) {
       // Users with the bot off still sync (cheap): that's when parked copy money moves back to their balance.
-      await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
+      if (autoPool.length) await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
+      const idle = idleReason(u);
+      if (idle && idle !== u.idle) logUser(u, Date.now(), idle);
+      u.idle = idle ?? undefined;
     }
     saveAutoStore(AUTO_FILE, autoStore);
   } catch (e) {
@@ -616,6 +638,9 @@ async function syncAutopilot(only?: AutoUser) {
   } finally {
     autoBusy = false;
   }
+  const next = [...autoQueued];
+  autoQueued.clear();
+  for (const u of next) await syncAutopilot(u);
 }
 // Copilot (Claude). Off until ANTHROPIC_API_KEY is set on Railway. Open to demo users too, so it's
 // capped: per visitor per hour, and in total per day.

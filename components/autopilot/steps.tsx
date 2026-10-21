@@ -371,7 +371,16 @@ export function GoLiveCard({ rulesText, busy, demo = false, onEdit, onStart }: {
       <div className="mt-6 flex justify-center gap-2">
         <button onClick={onEdit} className="glass rounded-full px-6 py-3 text-sm">Change rules</button>
         <button disabled={!ok || busy} onClick={() => onStart(mode)} className="rounded-full bg-mint px-8 py-3 font-semibold text-ink transition hover:bg-mint-2 disabled:opacity-50">
-          {busy ? "Starting…" : demo ? "Start the demo bot" : "Start my bot"}
+          {busy ? (
+            <span className="inline-flex items-center gap-2">
+              <span className="size-4 animate-spin rounded-full border-2 border-ink/30 border-t-ink" />
+              Starting…
+            </span>
+          ) : demo ? (
+            "Start the demo bot"
+          ) : (
+            "Start my bot"
+          )}
         </button>
       </div>
     </section>

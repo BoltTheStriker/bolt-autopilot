@@ -31,6 +31,7 @@ export type BotView = {
   curve?: number[]; // demo: account value since the start
   startedAt?: number; // demo: when it started
   halted?: boolean;
+  idle?: string | null; // real: the bot is on but copies nothing yet, and why (null: still looking)
 };
 
 const STRIKE_VAULTS = "https://app.strikefinance.org/vaults";
@@ -75,7 +76,7 @@ export function StatusCard({
   // The demo's profit is its balance against the $1,000 start (no rounding drift between the two).
   const profit = v.demo && v.balance !== null ? v.balance - 1_000 : v.copies.reduce((t, c) => t + c.pnl, 0);
   const working = v.copies.reduce((t, c) => t + c.amount, 0);
-  const title = v.mode === "off" ? "Bot is off" : v.halted ? "Paused for today (daily limit)" : v.demo ? "Demo bot is running" : v.mode === "autopilot" ? "Autopilot is running" : "Your bot is running";
+  const title = v.mode === "off" ? "Bot is off" : v.halted ? "Paused for today (daily limit)" : v.demo ? "Demo bot is running" : v.copies.length === 0 && !v.idle ? "Your bot is starting" : v.mode === "autopilot" ? "Autopilot is running" : "Your bot is running";
   return (
     <section className="card relative overflow-hidden rounded-3xl p-6 sm:p-7" data-tour="overview">
       <div className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-mint/15 blur-[100px]" />
@@ -123,7 +124,7 @@ export function StatusCard({
               onClick={() => onMode("on")}
               className="rounded-full bg-mint px-5 py-2 text-sm font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97] disabled:opacity-50"
             >
-              Start
+              {busy ? <Spinning label="Starting…" /> : "Start"}
             </button>
           ) : (
             <button
@@ -131,7 +132,7 @@ export function StatusCard({
               onClick={() => confirm("Stop the bot? Its copies are closed at market.") && onMode("off")}
               className="rounded-full bg-neg/90 px-5 py-2 text-sm font-semibold text-white transition hover:bg-neg hover:shadow-[0_6px_24px_rgba(244,63,94,0.35)] active:scale-[0.97] disabled:opacity-50"
             >
-              Stop the bot
+              {busy ? <Spinning label="Stopping…" /> : "Stop the bot"}
             </button>
           )}
         </div>
@@ -155,6 +156,30 @@ export function StatusCard({
         </div>
         <Stat label={v.earn ? "In Earn (SLP)" : "Reserve"} value={usd(v.earn ? v.earn.value : v.reserve)} />
       </div>
+      {!v.demo && v.mode !== "off" && v.copies.length === 0 && (
+        <div className={`relative mt-4 flex flex-wrap items-start gap-3 rounded-2xl border px-4 py-3.5 ${v.idle ? "border-gold/30 bg-gold/[0.06]" : "border-mint/25 bg-mint/[0.05]"}`}>
+          {v.idle ? (
+            <>
+              <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-gold/20 text-xs font-bold text-gold">!</span>
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-white">Not copying yet</p>
+                <p className="mt-0.5 text-sm text-soft">{v.idle}</p>
+              </div>
+              <button onClick={onEdit} className="glass shrink-0 rounded-full px-4 py-1.5 text-sm">
+                Edit rules
+              </button>
+            </>
+          ) : (
+            <>
+              <span className="mt-0.5 size-6 shrink-0 animate-spin rounded-full border-2 border-mint/25 border-t-mint" />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-white">Finding traders for you…</p>
+                <p className="mt-0.5 text-sm text-soft">Your bot is matching Strike&apos;s top traders to your rules and starting the copies. This usually takes a minute or two; this page updates by itself.</p>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {v.curve && v.curve.length > 1 ? (
         <Curve values={v.curve} from={v.startedAt ? `Started ${time(v.startedAt)}` : "Start"} />
       ) : v.demo ? (
@@ -167,6 +192,15 @@ export function StatusCard({
       )}
       {v.rulesText && <p className="relative mt-4 text-xs text-muted">{v.rulesText[0].toUpperCase() + v.rulesText.slice(1)}.</p>}
     </section>
+  );
+}
+
+function Spinning({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="size-3.5 animate-spin rounded-full border-2 border-current/30 border-t-current" />
+      {label}
+    </span>
   );
 }
 

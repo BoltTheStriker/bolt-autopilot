@@ -16,6 +16,7 @@ export type AutoUserView = {
   log: { at: number; text: string }[];
   lastSyncAt?: number;
   lastError?: string;
+  idle?: string | null; // why the bot is on but copies nothing yet
 };
 export type AutoMe = {
   user: AutoUserView;

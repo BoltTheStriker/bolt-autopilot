@@ -32,6 +32,7 @@ export type AutoUser = {
   volume?: Record<string, { usd: number; orders: number }>; // subscription id → traded volume (kept after the copy ends)
   haltedDay?: string; // daily loss limit hit on this UTC day
   shareId?: string; // 12 hex: the public result card's id, made when the user first shares
+  idle?: string; // why the bot is on but copies nothing yet (shown on the dashboard); unset once copies run
   lastSyncAt?: number;
   lastError?: string;
 };
@@ -102,5 +103,5 @@ export function logUser(u: AutoUser, now: number, text: string) {
 
 /** What the user's own page may show: never the keys or session hashes. */
 export function publicUser(u: AutoUser) {
-  return { address: u.address, accountId: u.accountId, network: u.network, createdAt: u.createdAt, rules: u.rules, mode: u.mode, copies: u.copies ?? [], log: u.log.slice(0, 40), lastSyncAt: u.lastSyncAt, lastError: u.lastError };
+  return { address: u.address, accountId: u.accountId, network: u.network, createdAt: u.createdAt, rules: u.rules, mode: u.mode, copies: u.copies ?? [], log: u.log.slice(0, 40), lastSyncAt: u.lastSyncAt, lastError: u.lastError, idle: u.idle ?? null };
 }
