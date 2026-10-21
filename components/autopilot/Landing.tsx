@@ -12,6 +12,7 @@ import { Faq } from "../Faq";
 import { EASE, FadeUp, InView } from "../motion";
 import { SectionHeading } from "../ui";
 import { StrikeMark, StrikeWordmark } from "./strike";
+import { useEggTaps } from "./WalletEgg";
 
 const ic = (d: ReactNode) => (
   <svg viewBox="0 0 24 24" className="size-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -59,6 +60,7 @@ export function AutopilotLanding() {
 /* ---------------------------------------------------------------- hero */
 
 function Hero({ status }: { status: AutoStatus | null }) {
+  const eggTap = useEggTaps(); // 5 quick clicks on the logo: a hidden concept video
   return (
     <section className="relative overflow-hidden pt-32 pb-12 sm:pt-40">
       <FadeUp className="pointer-events-none absolute inset-0" aria-hidden y={0} blur={0} duration={1.8}>
@@ -72,7 +74,9 @@ function Hero({ status }: { status: AutoStatus | null }) {
         <div>
           <FadeUp delay={0.1} y={16} className="flex flex-wrap items-center gap-2">
             <span className="glass inline-flex items-center gap-2 rounded-full py-1.5 pr-4 pl-1.5 text-sm text-soft">
-              <span className="grid size-6 place-items-center rounded-full bg-mint text-ink">{I.bolt}</span>
+              <button type="button" onClick={eggTap} aria-label="Bolt Autopilot" className="grid size-6 place-items-center rounded-full bg-mint text-ink">
+                {I.bolt}
+              </button>
               Bolt Autopilot
               <span className="rounded-full border border-gold/40 px-2 py-0.5 font-mono text-[10px] tracking-wider text-gold uppercase">
                 Beta{status?.network === "testnet" ? " · testnet" : ""}

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { checkAdminKey } from "@/lib/adminPreview";
 import { autopilot } from "@/lib/autopilotApi";
+import { WalletEgg } from "./WalletEgg";
 
 // Loaded only after the check passes, so their content isn't in the HTML or sent to everyone else.
 const AutopilotLanding = dynamic(() => import("./Landing").then((m) => m.AutopilotLanding), { ssr: false });
@@ -28,5 +29,10 @@ export function AutopilotGate({ page }: { page: "landing" | "app" | "impact" }) 
     };
   }, [router]);
   if (!ok) return <main className="min-h-screen" />;
-  return page === "app" ? <AutopilotApp /> : page === "impact" ? <ImpactPage /> : <AutopilotLanding />;
+  return (
+    <>
+      {page === "app" ? <AutopilotApp /> : page === "impact" ? <ImpactPage /> : <AutopilotLanding />}
+      <WalletEgg />
+    </>
+  );
 }

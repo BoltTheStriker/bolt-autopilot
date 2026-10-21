@@ -15,6 +15,7 @@ import { SUSDRF_UNIT, type RealFiActions } from "./RealFi";
 import { encodeDemoCard, GOAL_LABEL, RISK_LABEL } from "@/lib/autopilotShare";
 import { DepositModal, type DepositStage } from "./Deposit";
 import { ShareModal, type ShareSource } from "./Share";
+import { useEggTaps } from "./WalletEgg";
 import { StrikeMark } from "./strike";
 import { WithdrawModal } from "./Withdraw";
 import { Activity, Allocation, EarnPanel, StatusCard, TabBar, TradersList, Transfers, type BotView, type Tab } from "./dashboard";
@@ -83,6 +84,7 @@ export function AutopilotApp() {
   const [sheet, setSheet] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [share, setShare] = useState<ShareSource | null>(null); // the result card, as it was when Share was tapped
+  const eggTap = useEggTaps(); // 5 quick clicks on the logo: a hidden concept video
   const [ranked, setRanked] = useState<PreviewTrader[] | null>(null); // the bot's traders now, for the rules preview
   useEffect(() => {
     let alive = true;
@@ -480,7 +482,9 @@ export function AutopilotApp() {
       <div className="min-w-0 space-y-5">
         <header className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="grid size-10 place-items-center rounded-2xl bg-mint text-ink [&>svg]:size-5">{I.spark}</span>
+            <button type="button" onClick={eggTap} aria-label="Bolt Autopilot" className="grid size-10 place-items-center rounded-2xl bg-mint text-ink [&>svg]:size-5">
+              {I.spark}
+            </button>
             <div>
               <h1 className="font-display text-2xl font-bold tracking-tight">Bolt Autopilot</h1>
               <p className="flex items-center gap-1.5 text-xs text-muted">
