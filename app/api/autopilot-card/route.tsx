@@ -1,8 +1,10 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ImageResponse } from "next/og";
 import { site } from "@/lib/config";
 import { fetchT } from "@/lib/fetchT";
 import { ogFont } from "@/lib/ogFont";
-import { decodeDemoCard, GOAL_LABEL, MARKETS_LABEL, parseRealCard, RISK_LABEL, type ShareCard } from "@/lib/autopilotShare";
+import { cardMood, decodeDemoCard, GOAL_LABEL, MARKETS_LABEL, parseRealCard, RISK_LABEL, type ShareCard } from "@/lib/autopilotShare";
 
 // Bolt Autopilot result card (1200×630): the preview image under a shared link on X, and a downloadable PNG.
 // ?d=… is a demo result carried in the link (always labelled demo); ?id=… is a real account's result,
@@ -48,9 +50,12 @@ export async function GET(req: Request) {
   const badge = demo ? "DEMO · PRETEND MONEY" : "REAL MONEY ON STRIKE";
   const chips = [RISK_LABEL[c.risk], GOAL_LABEL[c.goal], MARKETS_LABEL[c.markets], `${c.traders} trader${c.traders === 1 ? "" : "s"} copied`];
   const foot = demo ? "Try it with demo money" : "Numbers from the Bolt server";
-  const curve = demo && c.curve.length > 1 ? curvePath(c.curve, 520, 200) : null;
+  const curve = demo && c.curve.length > 1 ? curvePath(c.curve, 640, 96) : null;
+  const mood = cardMood(c.ret);
+  // The picture is read from disk (bundled with this route), not fetched: faster, and no network hop.
+  const moodImg = await readFile(join(process.cwd(), "public/memes/card", `${mood.img}.jpg`), "base64").then((b) => `data:image/jpeg;base64,${b}`, () => null);
 
-  const text = [...new Set(["BOLT AUTOPILOT", "Built on Strike", badge, pct, sub, ...chips, HOST, foot].join(""))].join("");
+  const text = [...new Set(["BOLT AUTOPILOT", "Built on Strike", badge, pct, sub, ...chips, HOST, foot, mood.caption].join(""))].join("");
   const [bold, medium] = await Promise.all([ogFont(700, text), ogFont(500, text)]);
   const fonts = [
     ...(bold ? [{ name: "Space Grotesk", data: bold, weight: 700 as const, style: "normal" as const }] : []),
@@ -59,15 +64,16 @@ export async function GET(req: Request) {
 
   const image = new ImageResponse(
     (
-      <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "52px 60px", background: "#070a09", fontFamily: "Space Grotesk", color: "#fff", position: "relative" }}>
-        <div style={{ position: "absolute", left: -140, top: -180, width: 780, height: 580, borderRadius: 9999, background: up ? "rgba(78,250,176,0.17)" : "rgba(244,63,94,0.15)", filter: "blur(90px)", display: "flex" }} />
+      <div style={{ width: "100%", height: "100%", display: "flex", background: "#070a09", fontFamily: "Space Grotesk", color: "#fff", position: "relative" }}>
+        <div style={{ position: "absolute", left: -160, top: -200, width: 760, height: 560, borderRadius: 9999, background: up ? "rgba(78,250,176,0.17)" : "rgba(244,63,94,0.15)", filter: "blur(90px)", display: "flex" }} />
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        {/* Left: the result */}
+        <div style={{ width: 770, height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "48px 0 44px 56px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={`${site.url}/mascot-512.png`} width={60} height={60} style={{ borderRadius: 9999, background: "#1d6b54" }} alt="" />
+            <img src={`${site.url}/mascot-512.png`} width={58} height={58} style={{ borderRadius: 9999, background: "#1d6b54" }} alt="" />
             <div style={{ display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "flex", fontSize: 30, fontWeight: 700, letterSpacing: 1 }}>BOLT AUTOPILOT</div>
+              <div style={{ display: "flex", fontSize: 29, fontWeight: 700, letterSpacing: 1 }}>BOLT AUTOPILOT</div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 2, fontSize: 20, fontWeight: 500, color: "rgba(255,255,255,0.6)" }}>
                 Built on
                 {site.strikeBrand && (
@@ -78,41 +84,52 @@ export async function GET(req: Request) {
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", padding: "9px 18px", borderRadius: 9999, border: `1px solid ${demo ? "rgba(232,190,90,0.45)" : "rgba(78,250,176,0.45)"}`, color: demo ? GOLD : MINT, fontSize: 20, fontWeight: 500, letterSpacing: 3 }}>
+
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <div style={{ display: "flex", fontSize: 138, fontWeight: 700, letterSpacing: -5, lineHeight: 1, color }}>{pct}</div>
+            <div style={{ display: "flex", marginTop: 12, fontSize: 29, fontWeight: 500, color: "rgba(255,255,255,0.7)" }}>{sub}</div>
+            {curve && (
+              <svg width={640} height={96} viewBox="0 0 640 96" style={{ display: "flex", marginTop: 18 }}>
+                <defs>
+                  <linearGradient id="f" x1="0" x2="0" y1="0" y2="1">
+                    <stop offset="0" stopColor={color} stopOpacity="0.3" />
+                    <stop offset="1" stopColor={color} stopOpacity="0" />
+                  </linearGradient>
+                </defs>
+                <path d={curve.fill} fill="url(#f)" />
+                <path d={curve.line} fill="none" stroke={color} strokeWidth={3.5} strokeLinejoin="round" strokeLinecap="round" />
+              </svg>
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {chips.map((t) => (
+                <div key={t} style={{ display: "flex", padding: "8px 16px", borderRadius: 14, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 20, fontWeight: 500 }}>
+                  {t}
+                </div>
+              ))}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+              <div style={{ display: "flex", fontSize: 26, fontWeight: 700, color: MINT }}>{HOST}</div>
+              <div style={{ display: "flex", fontSize: 18, color: "rgba(255,255,255,0.45)" }}>{foot}</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Right: Bolt, in the mood of the result */}
+        <div style={{ position: "relative", width: 430, height: "100%", display: "flex" }}>
+          {moodImg && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={moodImg} width={430} height={630} style={{ objectFit: "cover", width: 430, height: 630 }} alt="" />
+          )}
+          <div style={{ position: "absolute", inset: 0, display: "flex", background: "linear-gradient(90deg, #070a09 0%, rgba(7,10,9,0.55) 22%, rgba(7,10,9,0) 48%)" }} />
+          <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 240, display: "flex", background: "linear-gradient(0deg, rgba(7,10,9,0.95) 0%, rgba(7,10,9,0) 100%)" }} />
+          <div style={{ position: "absolute", top: 44, right: 40, display: "flex", padding: "8px 16px", borderRadius: 9999, background: "rgba(7,10,9,0.7)", border: `1px solid ${demo ? "rgba(232,190,90,0.5)" : "rgba(78,250,176,0.5)"}`, color: demo ? GOLD : MINT, fontSize: 17, fontWeight: 500, letterSpacing: 2.5 }}>
             {badge}
           </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ display: "flex", fontSize: 150, fontWeight: 700, letterSpacing: -5, lineHeight: 1, color }}>{pct}</div>
-            <div style={{ display: "flex", marginTop: 16, fontSize: 32, fontWeight: 500, color: "rgba(255,255,255,0.7)" }}>{sub}</div>
-          </div>
-          {curve && (
-            <svg width={520} height={200} viewBox="0 0 520 200" style={{ display: "flex" }}>
-              <defs>
-                <linearGradient id="f" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0" stopColor={color} stopOpacity="0.32" />
-                  <stop offset="1" stopColor={color} stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              <path d={curve.fill} fill="url(#f)" />
-              <path d={curve.line} fill="none" stroke={color} strokeWidth={4} strokeLinejoin="round" strokeLinecap="round" />
-            </svg>
-          )}
-        </div>
-
-        <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, maxWidth: 760 }}>
-            {chips.map((t) => (
-              <div key={t} style={{ display: "flex", padding: "10px 18px", borderRadius: 16, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", fontSize: 22, fontWeight: 500 }}>
-                {t}
-              </div>
-            ))}
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
-            <div style={{ display: "flex", fontSize: 28, fontWeight: 700, color: MINT }}>{HOST}</div>
-            <div style={{ display: "flex", marginTop: 6, fontSize: 18, color: "rgba(255,255,255,0.45)" }}>{foot}</div>
+          <div style={{ position: "absolute", left: 40, right: 40, bottom: 44, display: "flex", justifyContent: "center", textAlign: "center", fontSize: 38, fontWeight: 700, lineHeight: 1.1, color: "#fff", textShadow: "0 2px 12px rgba(0,0,0,0.8)" }}>
+            {mood.caption}
           </div>
         </div>
       </div>

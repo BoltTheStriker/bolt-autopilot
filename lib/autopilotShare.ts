@@ -70,3 +70,13 @@ export function parseRealCard(j: unknown): ShareCard | null {
 export const RISK_LABEL: Record<Risk, string> = { low: "Low risk", medium: "Medium risk", high: "High risk" };
 export const GOAL_LABEL: Record<Goal, string> = { steady: "Steady", balanced: "Balanced", growth: "Growth" };
 export const MARKETS_LABEL: Record<Markets, string> = { all: "All markets", crypto: "Crypto", realworld: "Real-world markets" };
+
+/** Bolt's mood on the card: a meme picture and caption by result (no gloating, no despair). */
+export function cardMood(ret: number): { img: string; caption: string } {
+  if (ret >= 0.05) return { img: "04-strike", caption: "Strike mode: on." };
+  if (ret >= 0.01) return { img: "03-strike-coin", caption: "Stacking gains." };
+  if (ret >= 0) return { img: "09-copy-trade-desk", caption: "Copying the best. Easy." };
+  if (ret > -0.01) return { img: "02-trading-desk", caption: "Just a scratch. Coffee first." };
+  if (ret > -0.05) return { img: "07-rooftop", caption: "Stop-loss on. Holding the line." };
+  return { img: "06-gym", caption: "Red day. Back to the gym." };
+}
