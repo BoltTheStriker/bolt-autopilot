@@ -9,7 +9,7 @@ const MAIN_HOSTS = ["www.boltstriker.io", "boltstriker.io"].map((value) => [{ ty
 const nextConfig: NextConfig = {
   cacheComponents: true,
   // The result card reads Bolt's meme pictures from disk: ship them with that route.
-  outputFileTracingIncludes: { "/api/autopilot-card": ["./public/memes/card/*.jpg"] },
+  outputFileTracingIncludes: { "/api/autopilot-card": ["./public/memes/card/*.jpg"], "/api/autopilot-og": ["./public/og/bolt.png"] },
   partialPrefetching: true,
   // The platform moved from /dashboard to /app when the marketing homepage was split out.
   async redirects() {
