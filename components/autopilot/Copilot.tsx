@@ -111,7 +111,7 @@ export function CopilotPanel({
                         onApply(m.pending!);
                         say([{ text: "Done. Your bot uses the new rules from now on." }]);
                       }}
-                      className="rounded-full bg-mint px-3.5 py-1.5 text-xs font-semibold text-ink"
+                      className="rounded-full bg-mint px-3.5 py-1.5 text-xs font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]"
                     >
                       Apply
                     </button>
@@ -159,7 +159,7 @@ export function CopilotPanel({
               placeholder="Ask anything in your own words…"
               className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-white/35"
             />
-            <button disabled={!draft.trim() || thinking} className="rounded-xl bg-mint px-3 py-1.5 text-xs font-semibold text-ink disabled:opacity-40">
+            <button disabled={!draft.trim() || thinking} className="rounded-xl bg-mint px-3 py-1.5 text-xs font-semibold text-ink disabled:opacity-40 transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]">
               Send
             </button>
           </form>

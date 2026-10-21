@@ -163,7 +163,7 @@ export function WithdrawModal({
                 <p className="mt-4 font-display text-xl font-semibold">On its way to your wallet</p>
                 <p className="mt-2 text-sm text-muted">{queue || "Strike is processing it."}</p>
                 <p className="mt-1 font-mono text-[11px] text-white/40">{short(address)}</p>
-                <button onClick={close} className="mt-6 w-full rounded-full bg-mint py-3 font-semibold text-ink">
+                <button onClick={close} className="mt-6 w-full rounded-full bg-mint py-3 font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]">
                   Done
                 </button>
               </div>
@@ -263,11 +263,11 @@ export function WithdrawModal({
                 {error && <p className="mt-3 rounded-xl bg-neg/10 px-3 py-2 text-sm text-neg">{error}</p>}
 
                 {quote ? (
-                  <button disabled={busy === "sign" || !wallet} onClick={() => void sign()} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-mint py-3 font-semibold text-ink disabled:opacity-50">
+                  <button disabled={busy === "sign" || !wallet} onClick={() => void sign()} className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-mint py-3 font-semibold text-ink disabled:opacity-50 transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]">
                     {busy === "sign" ? "Check your wallet…" : "Sign & withdraw"}
                   </button>
                 ) : (
-                  <button disabled={!(value > 0) || value > max || busy === "quote"} onClick={() => void getQuote()} className="mt-5 w-full rounded-full bg-mint py-3 font-semibold text-ink disabled:opacity-50">
+                  <button disabled={!(value > 0) || value > max || busy === "quote"} onClick={() => void getQuote()} className="mt-5 w-full rounded-full bg-mint py-3 font-semibold text-ink disabled:opacity-50 transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]">
                     {busy === "move" ? "Sign in your wallet to move it to your main account…" : busy === "quote" ? "Getting a quote…" : value > max ? "More than you have" : "Review"}
                   </button>
                 )}

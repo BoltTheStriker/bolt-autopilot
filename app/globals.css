@@ -88,6 +88,27 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.09);
   }
 
+  /* Glass buttons and links: a lift on hover, a press, and a focus ring for keyboards. */
+  :is(button, a).glass {
+    transition:
+      background-color 0.2s,
+      border-color 0.2s,
+      color 0.2s,
+      transform 0.15s;
+  }
+  :is(button, a).glass:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.24);
+    color: #fff;
+  }
+  :is(button, a).glass:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  :is(button, a):focus-visible {
+    outline: 2px solid var(--color-mint);
+    outline-offset: 2px;
+  }
+
   .card {
     background: linear-gradient(160deg, rgba(30, 30, 30, 0.92) 0%, rgba(18, 18, 18, 0.92) 100%);
     border: 1px solid rgba(255, 255, 255, 0.08);

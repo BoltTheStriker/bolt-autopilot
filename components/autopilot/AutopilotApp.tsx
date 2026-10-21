@@ -606,7 +606,7 @@ export function AutopilotApp() {
           )}
         </AnimatePresence>
         {!sheet && (
-          <button data-tour="copilot" onClick={() => setSheet(true)} className="fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-full bg-mint px-5 py-3 font-semibold text-ink shadow-[0_10px_40px_rgba(78,250,176,0.35)]">
+          <button data-tour="copilot" onClick={() => setSheet(true)} className="fixed right-4 bottom-4 z-50 flex items-center gap-2 rounded-full bg-mint px-5 py-3 font-semibold text-ink shadow-[0_10px_40px_rgba(78,250,176,0.35)] transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]">
             {I.spark} Copilot
           </button>
         )}

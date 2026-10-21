@@ -1,7 +1,8 @@
 "use client";
 
 // Autopilot after setup: overview, traders, Earn (Strike's SLP vault and RealFi sUSDrf via Borrow & Earn), activity.
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef, useState } from "react";
 import type { AutoCopy, AutoMe, AutoMode, SlpInfo } from "@/lib/autopilotApi";
 import { RealFiFlow, type RealFiActions } from "./RealFi";
 import { I, short, signed, Stat, time, usd } from "./steps";
@@ -97,9 +98,9 @@ export function StatusCard({
             {title}
           </h2>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {onDeposit && (
-            <button onClick={onDeposit} className="rounded-full bg-mint/15 px-4 py-2 text-sm text-mint hover:bg-mint/25">
+            <button onClick={onDeposit} className="rounded-full border border-mint/20 bg-mint/15 px-4 py-2 text-sm text-mint transition hover:border-mint/45 hover:bg-mint/25 active:scale-[0.97]">
               Deposit
             </button>
           )}
@@ -108,34 +109,49 @@ export function StatusCard({
               Withdraw
             </button>
           )}
-          {onShare && (
-            <button onClick={onShare} className="glass rounded-full px-4 py-2 text-sm">
-              Share
-            </button>
-          )}
           <button onClick={onEdit} className="glass rounded-full px-4 py-2 text-sm">Edit rules</button>
           {v.demo ? (
-            <>
-              {onRestart && (
-                <button disabled={busy} onClick={() => confirm("Restart the demo from $1,000 with fresh picks?") && onRestart()} className="glass rounded-full px-4 py-2 text-sm">
-                  Restart
-                </button>
-              )}
-              <button onClick={onLeave} className="glass rounded-full px-4 py-2 text-sm">Leave demo</button>
-            </>
+            <MoreMenu
+              items={[
+                ...(onRestart ? [{ label: "Restart from $1,000", onClick: () => confirm("Restart the demo from $1,000 with fresh picks?") && onRestart(), disabled: busy }] : []),
+                { label: "Leave demo", onClick: onLeave },
+              ]}
+            />
           ) : v.mode === "off" ? (
-            <button disabled={busy} onClick={() => onMode("on")} className="rounded-full bg-mint px-5 py-2 text-sm font-semibold text-ink">Start</button>
+            <button
+              disabled={busy}
+              onClick={() => onMode("on")}
+              className="rounded-full bg-mint px-5 py-2 text-sm font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97] disabled:opacity-50"
+            >
+              Start
+            </button>
           ) : (
-            <button disabled={busy} onClick={() => confirm("Stop the bot? Its copies are closed at market.") && onMode("off")} className="rounded-full bg-neg/90 px-5 py-2 text-sm font-semibold text-white">Stop the bot</button>
+            <button
+              disabled={busy}
+              onClick={() => confirm("Stop the bot? Its copies are closed at market.") && onMode("off")}
+              className="rounded-full bg-neg/90 px-5 py-2 text-sm font-semibold text-white transition hover:bg-neg hover:shadow-[0_6px_24px_rgba(244,63,94,0.35)] active:scale-[0.97] disabled:opacity-50"
+            >
+              Stop the bot
+            </button>
           )}
         </div>
       </div>
       <div className="relative mt-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label={v.demo ? "Demo balance" : "Total on Strike"} value={v.balance === null ? "—" : usd(v.balance)} />
         <Stat label="Working in copies" value={usd(working)} />
-        <div className="rounded-xl border border-mint/25 bg-mint/[0.06] px-3 py-2.5">
-          <p className="text-[11px] text-muted">{v.demo ? "Profit since start" : "Profit on copies"}</p>
+        <div className={`group relative rounded-xl border border-mint/25 bg-mint/[0.06] px-3 py-2.5 transition ${onShare ? "hover:border-mint/50 hover:bg-mint/[0.1]" : ""}`}>
+          <p className="pr-8 text-[11px] text-muted">{v.demo ? "Profit since start" : "Profit on copies"}</p>
           <p className={`mt-0.5 font-mono text-lg ${profit >= 0 ? "text-mint" : "text-neg"}`}>{signed(profit)}</p>
+          {onShare && (
+            <button
+              onClick={onShare}
+              aria-label="Share your result"
+              title="Share your result"
+              className="absolute top-2 right-2 grid size-8 place-items-center rounded-full bg-mint/15 text-mint transition group-hover:bg-mint group-hover:text-ink hover:shadow-[0_4px_18px_rgba(78,250,176,0.4)] active:scale-[0.94]"
+            >
+              {SHARE_ICON}
+            </button>
+          )}
         </div>
         <Stat label={v.earn ? "In Earn (SLP)" : "Reserve"} value={usd(v.earn ? v.earn.value : v.reserve)} />
       </div>
@@ -151,6 +167,66 @@ export function StatusCard({
       )}
       {v.rulesText && <p className="relative mt-4 text-xs text-muted">{v.rulesText[0].toUpperCase() + v.rulesText.slice(1)}.</p>}
     </section>
+  );
+}
+
+const SHARE_ICON = (
+  <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 12v7a1 1 0 001 1h14a1 1 0 001-1v-7M16 6l-4-4-4 4M12 2v13" />
+  </svg>
+);
+
+/** A "⋯" button with a small menu: the demo's less-used actions. */
+function MoreMenu({ items }: { items: { label: string; onClick: () => void; disabled?: boolean }[] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((o) => !o)} aria-label="More" aria-expanded={open} className="glass grid size-9 place-items-center rounded-full text-soft">
+        <svg viewBox="0 0 24 24" className="size-4" fill="currentColor">
+          <circle cx="5" cy="12" r="1.8" />
+          <circle cx="12" cy="12" r="1.8" />
+          <circle cx="19" cy="12" r="1.8" />
+        </svg>
+      </button>
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -4, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+            transition={{ duration: 0.15 }}
+            className="absolute right-0 z-20 mt-2 w-52 overflow-hidden rounded-2xl border border-white/10 bg-[#141816] p-1 shadow-2xl"
+          >
+            {items.map((it) => (
+              <button
+                key={it.label}
+                disabled={it.disabled}
+                onClick={() => {
+                  setOpen(false);
+                  it.onClick();
+                }}
+                className="block w-full rounded-xl px-3 py-2.5 text-left text-sm text-soft transition hover:bg-white/[0.07] hover:text-white disabled:opacity-50"
+              >
+                {it.label}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 

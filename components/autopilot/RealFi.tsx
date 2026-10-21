@@ -106,7 +106,7 @@ export function RealFiFlow({ slp, realfi, actions }: { slp: SlpInfo | null; real
                   <button
                     disabled={actions.busy || !(Number(amount) >= 1) || Number(amount) > held || !key}
                     onClick={() => key && void actions.deposit(key, Number(amount))}
-                    className="rounded-full bg-mint px-3 py-1.5 text-xs font-semibold text-ink disabled:opacity-40"
+                    className="rounded-full bg-mint px-3 py-1.5 text-xs font-semibold text-ink disabled:opacity-40 transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]"
                   >
                     {actions.busy ? "Signing…" : "Deposit"}
                   </button>

@@ -191,7 +191,7 @@ export function Tour({ steps, open, onClose }: { steps: TourStep[]; open: boolea
             <button onClick={close} className="text-sm text-muted hover:text-white">Skip tour</button>
             <span className="ml-auto" />
             {i > 0 && <button onClick={() => setI(i - 1)} className="glass rounded-full px-4 py-1.5 text-sm">Back</button>}
-            <button onClick={() => (i + 1 >= live.length ? close() : setI(i + 1))} className="rounded-full bg-mint px-4 py-1.5 text-sm font-semibold text-ink">
+            <button onClick={() => (i + 1 >= live.length ? close() : setI(i + 1))} className="rounded-full bg-mint px-4 py-1.5 text-sm font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]">
               {i + 1 >= live.length ? "Got it" : "Next"}
             </button>
           </div>
