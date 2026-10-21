@@ -12,6 +12,7 @@ import { Faq } from "../Faq";
 import { EASE, FadeUp, InView } from "../motion";
 import { SectionHeading } from "../ui";
 import { StrikeMark, StrikeWordmark } from "./strike";
+import { SoonLink } from "./SoonLink";
 import { useEggTaps } from "./WalletEgg";
 
 const ic = (d: ReactNode) => (
@@ -98,12 +99,12 @@ function Hero({ status }: { status: AutoStatus | null }) {
             </p>
           </FadeUp>
           <FadeUp delay={0.5} className="mt-9 flex flex-col gap-3 sm:flex-row">
-            <Link href="/autopilot/app" className="group mint-glow inline-flex items-center justify-center gap-2 rounded-full bg-mint px-8 py-3.5 font-semibold text-ink transition hover:-translate-y-0.5 hover:bg-mint-2">
+            <SoonLink href="/autopilot/app" className="group mint-glow inline-flex items-center justify-center gap-2 rounded-full bg-mint px-8 py-3.5 font-semibold text-ink transition hover:-translate-y-0.5 hover:bg-mint-2">
               Launch Autopilot {I.arrow}
-            </Link>
-            <Link href="/autopilot/app?demo=1" className="glass rounded-full px-8 py-3.5 text-center font-semibold transition hover:-translate-y-0.5 hover:bg-white/10">
+            </SoonLink>
+            <SoonLink href="/autopilot/app?demo=1" soon="Demo opening soon" className="glass inline-flex items-center justify-center gap-2 rounded-full px-8 py-3.5 text-center font-semibold transition hover:-translate-y-0.5 hover:bg-white/10">
               Try with demo money
-            </Link>
+            </SoonLink>
           </FadeUp>
           <FadeUp delay={0.6}>
             <ul className="mt-8 flex flex-wrap gap-x-5 gap-y-2 text-sm text-muted">
@@ -284,9 +285,9 @@ function BoltOnStrike() {
       </div>
       <p className="mx-auto mt-6 max-w-3xl text-center text-sm text-muted">
         Every Bolt user is a Strike user: new accounts, copy-trading volume and RealFi liquidity land on Strike. Bolt is a community project, not made by Strike.{" "}
-        <Link href="/autopilot/impact" className="text-mint hover:underline">
+        <SoonLink href="/autopilot/impact" soon="Live numbers soon" className="inline-flex items-center gap-1 text-mint hover:underline">
           See the live numbers →
-        </Link>
+        </SoonLink>
       </p>
     </section>
   );
@@ -620,12 +621,12 @@ function Final() {
             <h2 className="font-display text-[clamp(2.4rem,5.5vw,4rem)] leading-[0.95] font-bold tracking-tight">Let the bot do the watching.</h2>
             <p className="mt-4 max-w-md text-lg text-ink/75">Set your goal once. Autopilot follows the best traders on Strike and keeps every copy inside your limits.</p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link href="/autopilot/app" className="rounded-full bg-ink px-7 py-3.5 font-semibold text-white transition hover:-translate-y-0.5">
+              <SoonLink href="/autopilot/app" className="inline-flex items-center gap-2 rounded-full bg-ink px-7 py-3.5 font-semibold text-white transition hover:-translate-y-0.5">
                 Launch Autopilot →
-              </Link>
-              <Link href="/autopilot/app?demo=1" className="rounded-full border-2 border-ink px-7 py-3 font-semibold transition hover:bg-ink hover:text-white">
+              </SoonLink>
+              <SoonLink href="/autopilot/app?demo=1" soon="Demo opening soon" className="inline-flex items-center gap-2 rounded-full border-2 border-ink px-7 py-3 font-semibold transition hover:bg-ink hover:text-white">
                 Try the demo
-              </Link>
+              </SoonLink>
             </div>
           </div>
           <div className="mx-auto w-48 rotate-3 overflow-hidden rounded-3xl border-4 border-ink shadow-[10px_10px_0_#0a0a0a] transition hover:rotate-0 sm:w-56">

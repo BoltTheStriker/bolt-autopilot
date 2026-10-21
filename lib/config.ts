@@ -56,6 +56,9 @@ export const site = {
   // Strike's official logo on the Autopilot pages (public/strike/). Get Strike's OK (Shan) before the
   // pages go public or into a video; false falls back to text-only "Built on Strike".
   strikeBrand: true,
+  /** Autopilot teaser: its landing page is public, but the app, demo and impact page stay locked ("Opening soon")
+   *  for everyone except a verified admin, until the worker says Autopilot is open. */
+  autopilotTeaser: true,
   botApi: process.env.NEXT_PUBLIC_BOT_API || "https://bolt-worker-production.up.railway.app", // env override for local testing
 
   socials: {

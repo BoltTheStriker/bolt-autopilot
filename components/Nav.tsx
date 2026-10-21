@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { EASE } from "./motion";
 import { site } from "@/lib/config";
 import { useVerifiedAdmin } from "@/lib/adminPreview";
+import { SoonLink } from "./autopilot/SoonLink";
 import { useAutopilotOpen } from "@/lib/autopilotApi";
 import { useOnAutopilotHost } from "@/lib/autopilotHost";
 
@@ -59,9 +60,11 @@ export function Nav() {
   // Autopilot's link shows once it opens (or to an admin previewing it).
   const autoOpen = useAutopilotOpen();
   const admin = useVerifiedAdmin();
-  const showAuto = autoOpen || admin;
+  const full = autoOpen || admin; // can go into the app and the impact page
+  const showAuto = full || site.autopilotTeaser; // the landing page is public in teaser mode
   const inAutoApp = path.startsWith("/autopilot/app") || (onAutoHost && path.startsWith("/app"));
-  const links = inAuto && showAuto ? (inAutoApp ? autoAppLinks : autoLinks) : [...(inApp ? appLinks : homeLinks), ...(showAuto ? [autoLink] : [])];
+  const inside = (l: { href: string }) => full || !l.href.startsWith("/autopilot/impact"); // the impact page stays private in teaser mode
+  const links = inAuto && showAuto ? (inAutoApp ? autoAppLinks : autoLinks).filter(inside) : [...(inApp ? appLinks : homeLinks), ...(showAuto ? [autoLink] : [])];
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -106,9 +109,9 @@ export function Nav() {
 
         <div className="flex items-center gap-2">
           {inAutoApp ? null : inAuto ? (
-            <Link href="/autopilot/app" className="rounded-full bg-mint px-4 py-2 text-sm font-semibold text-ink transition hover:bg-mint-2 sm:px-5">
+            <SoonLink href="/autopilot/app" tip="below" className="inline-flex items-center gap-1.5 rounded-full bg-mint px-4 py-2 text-sm font-semibold text-ink transition hover:bg-mint-2 sm:px-5">
               Launch app
-            </Link>
+            </SoonLink>
           ) : inApp ? (
             <a
               href={site.token.launchpad.url}
