@@ -23,6 +23,13 @@ type Coin = {
   fees?: { holders?: number };
   copyTrade?: { source?: string; volume?: number; trades?: number };
 };
+type Bench = {
+  startedAt: number;
+  updatedAt: number;
+  curve: { at: number; bolt: number; top: number }[];
+  bolt: { ret: number; maxDrawdown: number; retPerDrawdown: number | null; traders: number };
+  top: { ret: number; maxDrawdown: number; retPerDrawdown: number | null; traders: number };
+};
 type BotState = { liveStatus?: { mode?: string; liveSince?: number; account?: { equity?: number; netIn?: number; subs?: number } } };
 
 const num = (v: number | null | undefined, digits = 0) => (v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toLocaleString("en-US", { maximumFractionDigits: digits, minimumFractionDigits: digits }));
@@ -35,17 +42,19 @@ export function ImpactPage() {
   const [coin, setCoin] = useState<Coin | null>(null);
   const [bot, setBot] = useState<BotState | null>(null);
   const [slp, setSlp] = useState<SlpInfo | null>(null);
+  const [bench, setBench] = useState<Bench | null>(null);
   const [at, setAt] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       const get = <T,>(url: string) => fetch(url, { cache: "no-store" }).then((r) => (r.ok ? (r.json() as Promise<T>) : null)).catch(() => null);
-      const [i, c, b, e] = await Promise.all([
+      const [i, c, b, e, bm] = await Promise.all([
         get<Impact>(`${site.botApi}/autopilot/impact`),
         get<Coin>("/api/coin"),
         get<BotState>(`${site.botApi}/state`),
         autopilot.earn().catch(() => null),
+        get<Bench>("/api/benchmark"),
       ]);
       if (!alive) return;
       // A failed refresh keeps the last good numbers; a zero-filled coin answer means its sources failed.
@@ -53,6 +62,7 @@ export function ImpactPage() {
       if (c?.holders) setCoin(c);
       if (b) setBot(b);
       if (e?.slp) setSlp(e.slp);
+      if (bm) setBench(bm);
       setAt(Date.now());
     };
     void load();
@@ -111,6 +121,14 @@ export function ImpactPage() {
         <Stat value={`₳${compact(coin?.volumeAda)}`} label="$BOLT token trading volume" note="the community behind the bot" />
       </Block>
 
+      <section id="benchmark" className="mx-auto max-w-6xl scroll-mt-28 px-4 pt-24 sm:px-6">
+        <SectionHeading eyebrow="Proof, in public" title={<>Bolt vs <span className="text-gradient">the leaderboard.</span></>}>
+          Two $1,000 paper portfolios on Strike&apos;s live data, tracked forward from the day we started: Bolt&apos;s picks against copying the top 10 traders by 30-day return, the way most
+          people copy by hand.
+        </SectionHeading>
+        <Benchmark bench={bench} />
+      </section>
+
       <Block id="bot" eyebrow="The live bot" title={<>Real money, <span className="text-gradient">running on Strike.</span></>} intro="The same engine as Autopilot, copy-trading on Strike with the $BOLT team's own money.">
         <Stat value={day(liveSince)} label="Live with real money since" />
         <Stat value={num(impact?.liveBot.copies ?? live?.account?.subs)} label="Copies running now" />
@@ -142,6 +160,58 @@ export function ImpactPage() {
         </p>
       </section>
     </main>
+  );
+}
+
+function Benchmark({ bench }: { bench: Bench | null }) {
+  if (!bench) return <div className="mt-10 h-72 animate-pulse rounded-3xl bg-white/[0.04]" />;
+  const started = new Date(bench.startedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const young = bench.updatedAt - bench.startedAt < 24 * 3_600_000 || bench.curve.length < 4;
+  const pts = (k: "bolt" | "top") => {
+    const vals = bench.curve.flatMap((p) => [p.bolt, p.top]);
+    const lo = Math.min(...vals, 990), hi = Math.max(...vals, 1010);
+    return bench.curve.map((p, i) => `${(i / Math.max(1, bench.curve.length - 1)) * 100},${38 - ((p[k] - lo) / (hi - lo)) * 34}`).join(" ");
+  };
+  const pct = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}%`;
+  const side = (name: string, s: Bench["bolt"], mint: boolean, how: string) => (
+    <div className={`card rounded-3xl p-6 ${mint ? "border border-mint/30" : ""}`}>
+      <p className={`font-mono text-xs tracking-wider uppercase ${mint ? "text-mint" : "text-muted"}`}>{name}</p>
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        <div><p className="text-xs text-muted">Return</p><p className={`mt-1 font-display text-2xl font-bold ${s.ret >= 0 ? "text-white" : "text-neg"}`}>{young ? "—" : pct(s.ret)}</p></div>
+        <div><p className="text-xs text-muted">Worst drop</p><p className="mt-1 font-display text-2xl font-bold">{young ? "—" : `−${(s.maxDrawdown * 100).toFixed(1)}%`}</p></div>
+        <div><p className="text-xs text-muted">Return per drop</p><p className="mt-1 font-display text-2xl font-bold">{young || s.retPerDrawdown === null ? "—" : s.retPerDrawdown.toFixed(2)}</p></div>
+      </div>
+      <p className="mt-4 text-xs leading-relaxed text-muted">{how} · holding {s.traders} now</p>
+    </div>
+  );
+  return (
+    <div className="mt-10 space-y-3">
+      <div className="card rounded-3xl p-6">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+          <span className="flex items-center gap-2"><span className="h-0.5 w-5 rounded bg-mint" />Bolt&apos;s picks</span>
+          <span className="flex items-center gap-2"><span className="h-0.5 w-5 rounded bg-white/45" />Top 10 by 30-day return</span>
+          <span className="ml-auto font-mono text-muted">Since {started} · updated every 6 hours</span>
+        </div>
+        {young ? (
+          <p className="mt-6 rounded-2xl bg-white/[0.03] px-4 py-6 text-center text-sm text-soft">
+            Just started on {started}. Both portfolios hold their first picks; the first numbers show after a full day, and the comparison means more every week.
+          </p>
+        ) : (
+          <svg viewBox="0 0 100 40" preserveAspectRatio="none" className="mt-4 h-56 w-full" role="img" aria-label="Bolt's picks and the top 10 over time">
+            <polyline points={pts("top")} fill="none" stroke="rgba(255,255,255,0.45)" strokeWidth="1.4" vectorEffect="non-scaling-stroke" />
+            <polyline points={pts("bolt")} fill="none" stroke="#4efab0" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+          </svg>
+        )}
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
+        {side("Bolt's picks", bench.bolt, true, "Bolt's engine: its entry rules, a stop-loss per copy, rotation")}
+        {side("Top 10 by 30-day return", bench.top, false, "Equal parts, re-picked daily, no stop-loss")}
+      </div>
+      <p className="text-xs leading-relaxed text-white/40">
+        Paper portfolios on Strike&apos;s public data: each copy follows its trader&apos;s profit as a share of their account, the way Strike sizes copies, and both pay the same taker fee and slippage on
+        every mirrored trade. Not real trades; past results don&apos;t promise future ones.
+      </p>
+    </div>
   );
 }
 
