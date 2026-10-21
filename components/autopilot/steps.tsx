@@ -352,7 +352,7 @@ export function GoLiveCard({ rulesText, busy, demo = false, onEdit, onStart }: {
         {(
           [
             ["on", "Follow my rules", "The bot runs exactly the rules you set."],
-            ["autopilot", "Autopilot", "The copilot may also fine-tune them, within your limits."],
+            ["autopilot", "Autopilot", "Bolt's AI also looks after it: swaps weak traders, steps risk down after losses. Never beyond your limits."],
           ] as const
         ).map(([id, t, d]) => (
           <button key={id} onClick={() => setMode(id)} className={`rounded-2xl border p-3 text-left transition ${mode === id ? "border-mint/60 bg-mint/[0.09]" : "border-white/10 hover:border-white/25"}`}>

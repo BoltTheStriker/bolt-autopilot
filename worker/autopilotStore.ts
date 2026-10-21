@@ -7,7 +7,8 @@
 
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import type { AutoRules } from "./autopilot.ts";
+import { describeRules, type AutoRules } from "./autopilot.ts";
+import type { Drops, Tuned } from "./autotune.ts";
 
 export type Mode = "off" | "on" | "autopilot"; // on = runs the user's rules; autopilot = the copilot may also adjust them within limits
 export type AutoUser = {
@@ -33,6 +34,11 @@ export type AutoUser = {
   haltedDay?: string; // daily loss limit hit on this UTC day
   shareId?: string; // 12 hex: the public result card's id, made when the user first shares
   idle?: string; // why the bot is on but copies nothing yet (shown on the dashboard); unset once copies run
+  // Autopilot mode (autotune.ts): rules it runs with now (inside the user's own), traders it set aside, review pacing.
+  tuned?: Tuned;
+  drops?: Drops;
+  reviewedAt?: number;
+  reviews?: { day: string; n: number };
   lastSyncAt?: number;
   lastError?: string;
 };
@@ -103,5 +109,7 @@ export function logUser(u: AutoUser, now: number, text: string) {
 
 /** What the user's own page may show: never the keys or session hashes. */
 export function publicUser(u: AutoUser) {
-  return { address: u.address, accountId: u.accountId, network: u.network, createdAt: u.createdAt, rules: u.rules, mode: u.mode, copies: u.copies ?? [], log: u.log.slice(0, 40), lastSyncAt: u.lastSyncAt, lastError: u.lastError, idle: u.idle ?? null };
+  return { address: u.address, accountId: u.accountId, network: u.network, createdAt: u.createdAt, rules: u.rules, mode: u.mode, copies: u.copies ?? [], log: u.log.slice(0, 40), lastSyncAt: u.lastSyncAt, lastError: u.lastError, idle: u.idle ?? null,
+    // What Autopilot runs with right now, when it changed something (always inside the user's rules).
+    autopilot: u.tuned ? { rulesText: describeRules(u.tuned.rules), reason: u.tuned.reason, at: u.tuned.at } : null, reviewedAt: u.reviewedAt ?? null };
 }

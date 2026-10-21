@@ -4,7 +4,7 @@
 // size, the way Strike sizes copies. Your stop-losses, profit lock and daily limit apply.
 // An estimate on pretend money: real copies also pay fees and can fill differently.
 import type { AutoCopy } from "./autopilotApi.ts";
-import { copySpecs, pickTraders, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "../worker/autopilot.ts";
+import { copySpecs, MIN_COPY_USD, pickTraders, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "../worker/autopilot.ts";
 
 export const DEMO_BALANCE = 1_000;
 const MAX_POINTS = 1_500;
@@ -30,7 +30,10 @@ export type DemoLive = {
   dayStart: number;
   dayStartValue: number;
   haltedDay: number | null;
+  bench?: string[]; // the next best fits for these rules, for Autopilot to move money to
+  autoNote?: { at: number; text: string }; // Autopilot's latest action
 };
+export type DemoOptions = { autopilot?: boolean };
 
 const posKey = (p: { coin: string; long: boolean }) => `${p.coin}:${p.long ? "L" : "S"}`;
 const name = (coin: string) => coin.replace(/^xyz:/, "");
@@ -58,11 +61,16 @@ export function startDemo(traders: PreviewTrader[], marks: Record<string, LiveMa
     { at: now, text: `Demo started with $${DEMO_BALANCE.toLocaleString("en-US")}: copying ${copies.length} trader${copies.length === 1 ? "" : "s"}.` },
     ...copies.map((c) => ({ at: now, text: `Copying ${c.lead} with $${c.amount.toFixed(0)} (stops at −$${(c.amount * rules.stopLossPct).toFixed(0)}).` })),
   ];
-  return { startedAt: now, copies, log, curve: [[now, DEMO_BALANCE]], dayStart: dayOf(now), dayStartValue: DEMO_BALANCE, haltedDay: null };
+  // The next best fits, in order, for Autopilot mode (smallest copy size: they must be followable when money moves).
+  const bench = pickTraders(live, { ...rules, traders: 6 })
+    .map((t) => t.lead)
+    .filter((l) => !specs.some((s) => s.lead === l));
+  return { startedAt: now, copies, log, curve: [[now, DEMO_BALANCE]], dayStart: dayOf(now), dayStartValue: DEMO_BALANCE, haltedDay: null, bench };
 }
 
-/** Move the demo to the latest marks. Pure: returns a new state. */
-export function stepDemo(prev: DemoLive, marks: Record<string, LiveMark>, rules: AutoRules, now: number): DemoLive {
+/** Move the demo to the latest marks. Pure: returns a new state. In Autopilot mode, money a stop-loss
+ *  frees goes on to the next best fit for the rules (the real bot's Autopilot does the same, and more). */
+export function stepDemo(prev: DemoLive, marks: Record<string, LiveMark>, rules: AutoRules, now: number, opts: DemoOptions = {}): DemoLive {
   const d: DemoLive = { ...prev, copies: prev.copies.map((c) => ({ ...c })), log: [...prev.log], curve: [...prev.curve] };
   const say = (text: string) => d.log.unshift({ at: now, text });
   if (dayOf(now) !== d.dayStart) {
@@ -90,6 +98,7 @@ export function stepDemo(prev: DemoLive, marks: Record<string, LiveMark>, rules:
     if (c.ret <= -rules.stopLossPct) {
       c.stopped = now;
       say(`Stop-loss: copy of ${c.lead} closed at −${money(c.amount * rules.stopLossPct)}. The rest kept running.`);
+      if (opts.autopilot) autopilotSwap(d, c, marks, rules, now, say);
     } else if (rules.profitLockPct && c.ret >= rules.profitLockPct) {
       const gain = c.amount * c.ret;
       c.banked += gain;
@@ -109,6 +118,21 @@ export function stepDemo(prev: DemoLive, marks: Record<string, LiveMark>, rules:
   if (d.curve.length > MAX_POINTS) d.curve.splice(1, d.curve.length - MAX_POINTS); // keep the start point
   if (d.log.length > 200) d.log.length = 200;
   return d;
+}
+
+/** Autopilot: move what a stopped copy has left to the next best fit that has a live feed. */
+function autopilotSwap(d: DemoLive, c: DemoCopy, marks: Record<string, LiveMark>, rules: AutoRules, now: number, say: (t: string) => void) {
+  const lost = c.amount * rules.stopLossPct;
+  const rest = c.amount - lost;
+  const next = (d.bench ?? []).find((l) => (marks[l]?.acct ?? 0) > 0 && !d.copies.some((x) => x.lead === l));
+  if (!next || rest < MIN_COPY_USD) return;
+  const m = marks[next];
+  const from = c.lead;
+  Object.assign(c, { lead: next, amount: Math.floor(rest * 100) / 100, acct: m.acct, basePnl: m.pnl, baseSince: m.since, carried: 0, ret: 0, banked: c.banked - lost, stopped: null, open: m.positions.map(posKey) });
+  d.bench = (d.bench ?? []).filter((l) => l !== next);
+  const text = `Autopilot: ${from} hit its stop-loss, so it moved the remaining ${money(rest)} to ${next}, the next best fit for your rules.`;
+  say(text);
+  d.autoNote = { at: now, text };
 }
 
 /** The dashboard's copies: each copy's profit, and the trader's open positions scaled to the copy. */

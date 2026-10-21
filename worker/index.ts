@@ -22,6 +22,7 @@ import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, 
 import { parkedOf, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { copilotReply, type ChatTurn } from "./copilot.ts";
+import { aiDecision, applyDecision, autopilotSignals, droppedLeads, effectiveRules, rulesDecision, type TraderStats } from "./autotune.ts";
 import { addTrades, DEFAULT_CONTEST, loadContest, parseTrade, saveContest, shown, standings, toCheck, type Trade } from "./contest.ts";
 import { onStrike, strikeBase, strikeShare } from "../bot/markets.ts";
 import { coverageAt, drawdown30d, entryRejection, equityOf, hardStopReason, initialState, returnCurve, scoreLead, short, step, type BotState, type FeedEvent, type Lead } from "../bot/strategy.ts";
@@ -597,15 +598,55 @@ function autoClient(u: AutoUser): StrikeClient {
   return c;
 }
 // Keep the traders already being copied while they're still ranked; skip ones Strike recently refused.
-const autoSpecs = (u: AutoUser) =>
-  u.rules && u.mode !== "off"
-    ? copySpecs(pickTraders(autoPool.filter((c) => !((u.cooldown?.[c.lead.toLowerCase()] ?? 0) > Date.now())), u.rules, Object.keys(u.managed)), u.rules, strikeSymbols)
-    : [];
+// The copies a user's bot should run: their rules (or Autopilot's, inside them), the ranked traders
+// minus ones Strike refused lately and ones Autopilot set aside.
+const autoSpecs = (u: AutoUser) => {
+  const rules = effectiveRules(u);
+  if (!rules || u.mode === "off") return [];
+  const now = Date.now();
+  const out = u.mode === "autopilot" ? droppedLeads(u, now) : new Set<string>();
+  const pool = autoPool.filter((c) => !((u.cooldown?.[c.lead.toLowerCase()] ?? 0) > now) && !out.has(c.lead.toLowerCase()));
+  return copySpecs(pickTraders(pool, rules, Object.keys(u.managed).filter((l) => !out.has(l.toLowerCase()))), rules, strikeSymbols);
+};
+/** A ranked trader's numbers for Autopilot's review (autoPool and autoPreview share their order). */
+function traderStats(lead: string): TraderStats | undefined {
+  const i = autoPool.findIndex((c) => c.lead.toLowerCase() === lead.toLowerCase());
+  if (i < 0) return undefined;
+  const c = autoPool[i];
+  return { lead: c.lead, score: +c.score.toFixed(3), dd: +c.dd.toFixed(3), roi7d: +(autoPreview[i]?.roi7d ?? 0).toFixed(4), roi30d: +c.roi30d.toFixed(4), realWorldShare: +c.realWorldShare.toFixed(2) };
+}
+/** Autopilot mode: look at the user's bot when something calls for it, and adjust inside their limits.
+ *  Claude decides when the copilot key is set; the plain-rules version otherwise (or if Claude fails).
+ *  True when it changed what the bot copies. */
+async function autopilotReview(u: AutoUser, now: number): Promise<boolean> {
+  const copies = (u.copies ?? []).map((c) => ({ lead: c.lead, amount: c.amount, pnl: c.pnl }));
+  const pnl = copies.reduce((t, c) => t + c.pnl, 0);
+  const dayLossUsd = Math.max(0, (u.dayStart?.pnl ?? pnl) - pnl);
+  const signals = autopilotSignals(u, { now, copies, ranked: new Set(autoPool.map((c) => c.lead.toLowerCase())), dayLossUsd });
+  if (!signals.length) return false;
+  const held = copies.map((c) => traderStats(c.lead)).filter((x): x is TraderStats => !!x);
+  const heldIds = new Set(copies.map((c) => c.lead.toLowerCase()));
+  const candidates = autoPool.filter((c) => !heldIds.has(c.lead.toLowerCase())).slice(0, 8).map((c) => traderStats(c.lead)!);
+  let decision = rulesDecision(u, signals, traderStats);
+  if (copilotOn()) {
+    try {
+      copilotClient ??= new Anthropic();
+      decision = await aiDecision(copilotClient, u, { signals, copies, dayLossUsd, held, candidates });
+    } catch (e) {
+      log("autopilot review: Claude unavailable, rules version used:", e instanceof Error ? e.message : e);
+    }
+  }
+  const before = JSON.stringify([effectiveRules(u), [...droppedLeads(u, now)]]);
+  const line = applyDecision(u, decision, now, copies.map((c) => c.lead));
+  if (line) logUser(u, now, line);
+  return JSON.stringify([effectiveRules(u), [...droppedLeads(u, now)]]) !== before;
+}
 /** Why a switched-on bot has nothing to copy, in the user's words (null when copies can start). */
 function idleReason(u: AutoUser): string | null {
-  if (!u.rules || u.mode === "off" || Object.keys(u.managed).length) return null;
+  const rules = effectiveRules(u);
+  if (!rules || u.mode === "off" || Object.keys(u.managed).length) return null;
   if (!autoPool.length) return "Loading Strike's trader rankings. Your copies start in a few minutes.";
-  const deployed = u.rules.budgetUsd * RISK_LEVELS[u.rules.risk].deploy;
+  const deployed = rules.budgetUsd * RISK_LEVELS[rules.risk].deploy;
   if (deployed < MIN_COPY_USD)
     return `Your rules put $${deployed.toFixed(2)} to work, under the $${MIN_COPY_USD} a copy needs to follow a trader's orders. Raise the budget or the risk level to start.`;
   if (!autoSpecs(u).length)
@@ -627,7 +668,11 @@ async function syncAutopilot(only?: AutoUser) {
   try {
     for (const u of only ? [only] : Object.values(autoStore.users)) {
       // Users with the bot off still sync (cheap): that's when parked copy money moves back to their balance.
-      if (autoPool.length) await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
+      if (autoPool.length) {
+        await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
+        // Autopilot mode: review when something calls for it; a change takes effect right away.
+        if (u.mode === "autopilot" && (await autopilotReview(u, Date.now()))) await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
+      }
       const idle = idleReason(u);
       if (idle && idle !== u.idle) logUser(u, Date.now(), idle);
       u.idle = idle ?? undefined;
@@ -818,6 +863,7 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
     const rules = sanitizeRules(body.rules, AUTO.maxBudgetUsd);
     if (!rules) return { status: 400, data: { error: "Those rules don't look right." } };
     u!.rules = rules;
+    delete u!.tuned; // new limits: Autopilot starts again from the user's own rules
     logUser(u!, now, `Rules set: ${describeRules(rules)}.`);
     saveAutoStore(AUTO_FILE, autoStore);
     if (u!.mode !== "off") void syncAutopilot(u);
@@ -827,8 +873,18 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
     const mode = String(body.mode) as Mode;
     if (!["off", "on", "autopilot"].includes(mode)) return { status: 400, data: { error: "mode must be off, on or autopilot" } };
     if (mode !== "off" && !u!.rules) return { status: 400, data: { error: "Set your rules first." } };
+    if (mode === "autopilot" && u!.mode !== "autopilot") u!.reviewedAt = 0; // first review on the next sync
+    if (mode !== "autopilot") delete u!.tuned; // following the user's own rules again
     u!.mode = mode;
-    logUser(u!, now, mode === "off" ? "Bot switched off: stopping its copies." : mode === "autopilot" ? "Autopilot on: the copilot may adjust your rules within your limits." : "Bot switched on.");
+    logUser(
+      u!,
+      now,
+      mode === "off"
+        ? "Bot switched off: stopping its copies."
+        : mode === "autopilot"
+          ? "Autopilot on: it watches your copies and adjusts them inside your limits (swaps weak traders, steps risk down after losses). It never goes beyond your settings."
+          : "Bot switched on.",
+    );
     saveAutoStore(AUTO_FILE, autoStore);
     void syncAutopilot(u);
     return { status: 200, data: { user: publicUser(u!) } };

@@ -17,6 +17,8 @@ export type AutoUserView = {
   lastSyncAt?: number;
   lastError?: string;
   idle?: string | null; // why the bot is on but copies nothing yet
+  autopilot?: { rulesText: string; reason: string; at: number } | null; // what Autopilot runs with, when it changed something
+  reviewedAt?: number | null; // Autopilot's last check
 };
 export type AutoMe = {
   user: AutoUserView;

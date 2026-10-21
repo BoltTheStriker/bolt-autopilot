@@ -38,3 +38,23 @@ test("logs what the trader opens and closes; a feed restart doesn't jump the cop
   assert.equal(d2.copies[0].ret, before);
   assert.ok(d2.log.some((l) => l.text.includes("closed GOLD long")));
 });
+
+test("Autopilot mode: a stopped copy's money moves to the next best fit; the money adds up", () => {
+  const T0 = Date.UTC(2026, 9, 22, 12);
+  const am = (pnl: number): LiveMark => ({ pnl, unrealized: 0, acct: 100_000, since: T0, at: T0, positions: [] });
+  const traders = ["A", "B", "C", "D"].map((l, i) => t(l, 0.9 - i * 0.1));
+  const start = startDemo(traders, { A: am(0), B: am(0), C: am(0), D: am(0) }, rules, T0);
+  assert.deepEqual(start.copies.map((c) => c.lead), ["A", "B"]);
+  assert.deepEqual(start.bench, ["C", "D"]);
+  // A's trader loses 20% of their account: the copy hits its stop-loss (−15%).
+  const marks = { A: am(-20_000), B: am(0), C: am(500), D: am(0) };
+  const plain = stepDemo(start, marks, rules, T0 + 60_000);
+  const auto = stepDemo(start, marks, rules, T0 + 60_000, { autopilot: true });
+  assert.equal(plain.copies[0].stopped, T0 + 60_000); // "Follow my rules": the copy just stops
+  assert.equal(auto.copies[0].lead, "C"); // Autopilot: what's left goes on to C
+  assert.equal(auto.copies[0].stopped, null);
+  assert.equal(auto.copies[0].amount, 318.75); // $375 − 15%
+  assert.match(auto.log[0].text, /^Autopilot: A hit its stop-loss, so it moved the remaining \$318\.75 to C/);
+  assert.equal(Math.round(demoValue(auto, rules.stopLossPct) * 100), Math.round(demoValue(plain, rules.stopLossPct) * 100)); // same money, moved
+  assert.deepEqual(auto.bench, ["D"]);
+});

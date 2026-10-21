@@ -32,6 +32,8 @@ export type BotView = {
   startedAt?: number; // demo: when it started
   halted?: boolean;
   idle?: string | null; // real: the bot is on but copies nothing yet, and why (null: still looking)
+  /** Autopilot mode: its latest action, the rules it runs with when they differ from the user's, its last check. */
+  autopilot?: { reason: string | null; rulesText: string | null; at: number | null; checkedAt: number | null };
 };
 
 const STRIKE_VAULTS = "https://app.strikefinance.org/vaults";
@@ -156,6 +158,43 @@ export function StatusCard({
         </div>
         <Stat label={v.earn ? "In Earn (SLP)" : "Reserve"} value={usd(v.earn ? v.earn.value : v.reserve)} />
       </div>
+      {v.mode !== "off" && (
+        <div className="relative mt-4 flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-full bg-white/[0.05] p-1 text-xs">
+            {(
+              [
+                ["on", "Follow my rules"],
+                ["autopilot", "Autopilot"],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                disabled={busy || v.mode === m}
+                onClick={() => onMode(m)}
+                className={`rounded-full px-3 py-1.5 font-semibold transition ${v.mode === m ? "bg-mint text-ink" : "text-soft hover:text-white"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[11px] text-muted">{v.mode === "autopilot" ? "Bolt's AI looks after your setup, never beyond your limits." : "The bot runs exactly your rules."}</span>
+        </div>
+      )}
+      {v.mode === "autopilot" && v.autopilot && (
+        <div className="relative mt-3 flex gap-3 rounded-2xl border border-mint/25 bg-mint/[0.05] px-4 py-3.5">
+          <span className="mt-0.5 grid size-6 shrink-0 place-items-center rounded-full bg-mint text-ink [&>svg]:size-3.5">{I.spark}</span>
+          <div className="min-w-0 flex-1">
+            <p className="font-medium text-white">{v.autopilot.reason ? "Autopilot's latest change" : "Autopilot is watching"}</p>
+            <p className="mt-0.5 text-sm text-soft">
+              {v.autopilot.reason ?? "It checks your copies and adjusts inside your limits when something calls for it: a trader leaving the ranking, a copy near its stop-loss, losses near your daily limit."}
+            </p>
+            {v.autopilot.rulesText && <p className="mt-1.5 text-xs text-muted">Running with: {v.autopilot.rulesText[0].toUpperCase() + v.autopilot.rulesText.slice(1)}.</p>}
+            {(v.autopilot.at || v.autopilot.checkedAt) && (
+              <p className="mt-1 font-mono text-[10px] text-white/35">{v.autopilot.at ? `Changed ${time(v.autopilot.at)}` : ""}{v.autopilot.at && v.autopilot.checkedAt ? " · " : ""}{v.autopilot.checkedAt ? `Checked ${time(v.autopilot.checkedAt)}` : ""}</p>
+            )}
+          </div>
+        </div>
+      )}
       {!v.demo && v.mode !== "off" && v.copies.length === 0 && (
         <div className={`relative mt-4 flex flex-wrap items-start gap-3 rounded-2xl border px-4 py-3.5 ${v.idle ? "border-gold/30 bg-gold/[0.06]" : "border-mint/25 bg-mint/[0.05]"}`}>
           {v.idle ? (
@@ -190,7 +229,12 @@ export function StatusCard({
           {usd(v.parked!)} sits in a copy sub-account from the bot&apos;s first version: {v.mode === "off" ? "start the bot to reuse it, or move it to your main account in Strike's app to withdraw it." : "your next copy reuses it."}
         </p>
       )}
-      {v.rulesText && <p className="relative mt-4 text-xs text-muted">{v.rulesText[0].toUpperCase() + v.rulesText.slice(1)}.</p>}
+      {v.rulesText && (
+        <p className="relative mt-4 text-xs text-muted">
+          {v.mode === "autopilot" && v.autopilot?.rulesText ? "Your limits: " : ""}
+          {v.rulesText[0].toUpperCase() + v.rulesText.slice(1)}.
+        </p>
+      )}
     </section>
   );
 }

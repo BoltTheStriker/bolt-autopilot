@@ -149,7 +149,7 @@ export function AutopilotApp() {
           setMarks(r.marks);
           setDemo((d) => {
             if (!d.live || !d.rules) return d;
-            const next = { ...d, live: stepDemo(d.live, r.marks, d.rules, Date.now()) };
+            const next = { ...d, live: stepDemo(d.live, r.marks, d.rules, Date.now(), { autopilot: d.mode === "autopilot" }) };
             saveDemo(next);
             return next;
           });
@@ -304,6 +304,7 @@ export function AutopilotApp() {
         curve: demo.live.curve.map(([, v]) => v),
         startedAt: demo.live.startedAt,
         halted: demo.live.haltedDay !== null && demo.live.haltedDay === demo.live.dayStart,
+        autopilot: demo.mode === "autopilot" ? { reason: demo.live.autoNote?.text.replace(/^Autopilot: /, "") ?? null, rulesText: null, at: demo.live.autoNote?.at ?? null, checkedAt: null } : undefined,
       };
     }
     if (!me) return null;
@@ -324,6 +325,10 @@ export function AutopilotApp() {
       parked: me.parked ?? 0,
       earn: me.earn ?? null,
       halted: me.user.log.some((l) => /Daily loss limit/.test(l.text) && (me.user.lastSyncAt ?? 0) - l.at < 86_400_000),
+      autopilot:
+        me.user.mode === "autopilot"
+          ? { reason: me.user.autopilot?.reason ?? null, rulesText: me.user.autopilot?.rulesText ?? null, at: me.user.autopilot?.at ?? null, checkedAt: me.user.reviewedAt ?? null }
+          : undefined,
       idle:
         me.user.mode !== "off" && me.user.copies.length === 0
           ? (me.user.idle ?? (syncedSinceStart ? "The bot checked and hasn't started a copy yet. What it tried is under Activity; it tries again every few minutes." : null))
@@ -376,6 +381,8 @@ export function AutopilotApp() {
   async function setMode(m: AutoMode) {
     if (demoOn) {
       if (m === "off") return setDemoState({ ...demo, mode: "off" });
+      // Running already: switching between "Follow my rules" and Autopilot doesn't restart it.
+      if (demo.live && demo.mode !== "off") return setDemoState({ ...demo, mode: m });
       return runDemo(demo.rules!, m);
     }
     await run("mode", async () => {
