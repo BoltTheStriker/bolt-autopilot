@@ -4,7 +4,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AutoMode } from "@/lib/autopilotApi";
 import type { InstalledWallet } from "@/lib/wallet";
-import { describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Markets, type Risk } from "@/worker/autopilot";
+import { replayWeek, type Replay } from "@/lib/rulesReplay";
+import { describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Markets, type PreviewTrader, type Risk } from "@/worker/autopilot";
 import { MoneyPath } from "./strike";
 import { ChoiceCards, Slider, type TourStep } from "./ui";
 
@@ -205,6 +206,7 @@ export function RulesCard({
   preview,
   saveLabel = "Save my rules",
   apr,
+  traders,
   onSave,
   onCancel,
   onAsk,
@@ -217,6 +219,7 @@ export function RulesCard({
   preview: boolean;
   saveLabel?: string;
   apr?: number | null; // SLP's APR today, for the reserve line
+  traders?: PreviewTrader[] | null; // the bot's ranked traders right now, for "if you'd started 7 days ago"
   onSave: (r: AutoRules) => void;
   onCancel?: () => void;
   onAsk: () => void;
@@ -233,6 +236,7 @@ export function RulesCard({
   const perCopy = r.traders ? working / r.traders : 0;
   const reserve = r.budgetUsd - working;
   const summary = useMemo(() => describeRules(r).split("; "), [r]);
+  const replay = useMemo(() => (traders ? replayWeek(traders, r) : undefined), [traders, r]);
 
   return (
     <section className="grid gap-4 xl:grid-cols-[1.4fr_1fr]" data-tour="rules">
@@ -300,6 +304,7 @@ export function RulesCard({
             </li>
           ))}
         </ul>
+        <ReplayBox replay={replay} budget={r.budgetUsd} />
         {perCopy < MIN_COPY_USD && (
           <p className="relative mt-4 rounded-xl border border-gold/40 bg-gold/[0.08] px-3 py-2.5 text-xs leading-relaxed text-gold">
             Too small to copy: each copy needs at least ${MIN_COPY_USD}, and this setup puts ${perCopy.toFixed(0)} in each.{" "}
@@ -321,6 +326,40 @@ export function RulesCard({
         </div>
       </aside>
     </section>
+  );
+}
+
+/** "If you'd started 7 days ago": the current picks for these rules, replayed over the traders' last week. */
+function ReplayBox({ replay, budget }: { replay: Replay | null | undefined; budget: number }) {
+  const pct = (v: number) => `${v >= 0 ? "+" : "−"}${Math.abs(v * 100).toFixed(1)}%`;
+  const usd0 = (v: number) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
+  if (replay === undefined) return <div className="relative mt-5 h-[148px] animate-pulse rounded-2xl bg-white/[0.04]" />;
+  if (replay === null)
+    return <p className="relative mt-5 rounded-2xl bg-white/[0.04] px-3 py-3 text-xs text-muted">No ranked trader fits these rules right now, so there&apos;s nothing to replay. Try &quot;Everything&quot; for markets or fewer traders.</p>;
+  const up = replay.ret >= 0;
+  const color = up ? "#4efab0" : "#f43f5e";
+  const vals = replay.curve;
+  const lo = Math.min(...vals, -0.002), hi = Math.max(...vals, 0.002);
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${28 - ((v - lo) / (hi - lo || 1)) * 24}`).join(" ");
+  const zero = 28 - ((0 - lo) / (hi - lo || 1)) * 24;
+  return (
+    <div className="relative mt-5 rounded-2xl border border-white/10 bg-white/[0.03] p-4">
+      <p className="font-mono text-[10px] tracking-wider text-muted uppercase">If you&apos;d started 7 days ago</p>
+      <div className="mt-1.5 flex items-baseline gap-2">
+        <span className={`font-display text-2xl font-bold ${up ? "text-mint" : "text-neg"}`}>{pct(replay.ret)}</span>
+        <span className="font-mono text-sm text-soft">{usd0(replay.pnl)} on ${budget.toFixed(0)}</span>
+      </div>
+      <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="mt-2 h-12 w-full">
+        <line x1="0" x2="100" y1={zero} y2={zero} stroke="rgba(255,255,255,0.12)" strokeDasharray="1.5 1.5" vectorEffect="non-scaling-stroke" />
+        <polyline points={pts} fill="none" stroke={color} strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      </svg>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted">
+        Worst dip {pct(replay.worst)} · {replay.copies.length} trader{replay.copies.length === 1 ? "" : "s"}
+        {replay.copies.some((c) => c.stopped) ? ` · ${replay.copies.filter((c) => c.stopped).length} would have hit the stop-loss` : ""}. Their own last 30 days: {pct(replay.roi30d)}, worst
+        drop −{(replay.dd30d * 100).toFixed(0)}%.
+      </p>
+      <p className="mt-1 text-[10px] text-white/35">The bot&apos;s picks today, replayed over Strike&apos;s last week with your limits. Past results, not a promise; real copies pay fees.</p>
+    </div>
   );
 }
 

@@ -9,7 +9,7 @@ import { checkAdminKey, readAdminKey } from "@/lib/adminPreview";
 import { autopilot, saveSession, savedSession, type AutoMe, type AutoMode, type AutoStatus, type Session, type SlpInfo } from "@/lib/autopilotApi";
 import { DEMO_BALANCE, demoCopies, demoValue, startDemo as startLiveDemo, stepDemo, type DemoLive } from "@/lib/autopilotDemo";
 import { connectAddress, installedWallets, signAndSubmit, signText, walletBalance, walletUtxos, type InstalledWallet } from "@/lib/wallet";
-import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, type AutoRules, type LiveMark } from "@/worker/autopilot";
+import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "@/worker/autopilot";
 import { CopilotPanel } from "./Copilot";
 import { SUSDRF_UNIT, type RealFiActions } from "./RealFi";
 import { encodeDemoCard, GOAL_LABEL, RISK_LABEL } from "@/lib/autopilotShare";
@@ -83,6 +83,17 @@ export function AutopilotApp() {
   const [sheet, setSheet] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [share, setShare] = useState<ShareSource | null>(null); // the result card, as it was when Share was tapped
+  const [ranked, setRanked] = useState<PreviewTrader[] | null>(null); // the bot's traders now, for the rules preview
+  useEffect(() => {
+    let alive = true;
+    const load = () => autopilot.preview().then((p) => alive && setRanked(p.traders), () => alive && setRanked((x) => x ?? []));
+    void load();
+    const id = setInterval(load, 10 * 60_000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
   // The deposit this browser just sent (until Strike credits it), so the page can say it's on its way.
   const [sentDeposit, setSentDeposit] = useState<{ amount: number; asset: string; txHash: string; at: number; before: number } | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
@@ -536,6 +547,7 @@ export function AutopilotApp() {
                 preview={!demoOn && !session}
                 saveLabel={demoOn ? "Use these rules" : undefined}
                 apr={slp?.apr}
+                traders={ranked}
                 onAsk={() => setSheet(true)}
                 onChange={onDraft}
                 onSave={(r) => void saveRules(r)}
