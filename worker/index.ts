@@ -7,7 +7,7 @@
 //  GET /state     → the whole state as JSON for the website (CORS open, read-only)
 //
 //   node --experimental-strip-types worker/index.ts
-import { timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import { bot } from "../bot/config.ts";
@@ -649,6 +649,12 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
   if (url.pathname === "/autopilot/earn") return { status: 200, data: { slp: await slpInfo(Date.now()) } };
   if (url.pathname === "/autopilot/impact") return { status: 200, data: impactSummary(Date.now()) };
   if (url.pathname === "/autopilot/marks") return { status: 200, data: { at: Date.now(), marks: Object.fromEntries(autoMarks) } };
+  // A shared result card: return on running copies, rules and trader count only (no amounts, no address).
+  const cardId = /^\/autopilot\/card\/([0-9a-f]{12})$/.exec(url.pathname)?.[1];
+  if (cardId) {
+    const u = Object.values(autoStore.users).find((x) => x.shareId === cardId);
+    return u?.rules ? { status: 200, data: resultCard(u) } : { status: 404, data: { error: "not found" } };
+  }
   if (url.pathname === "/autopilot/copilot" && req.method === "POST") {
     if (!copilotOn()) return { status: 503, data: { error: "The copilot chat isn't switched on yet. Quick tweaks work." } };
     const ip = String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "").split(",")[0].trim();
@@ -776,6 +782,13 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
       },
     };
   }
+  if (url.pathname === "/autopilot/share") {
+    if (!u!.shareId) {
+      u!.shareId = randomBytes(6).toString("hex");
+      saveAutoStore(AUTO_FILE, autoStore);
+    }
+    return { status: 200, data: { id: u!.shareId } };
+  }
   if (url.pathname === "/autopilot/rules") {
     const rules = sanitizeRules(body.rules, AUTO.maxBudgetUsd);
     if (!rules) return { status: 400, data: { error: "Those rules don't look right." } };
@@ -856,6 +869,24 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
 const WITHDRAW_ASSETS = new Set(["ADA", "USDM"]);
 
 /** Public numbers for the Bolt × Strike impact page: what Bolt brings to Strike. No personal data. */
+/** What a user's public result card shows. */
+function resultCard(u: AutoUser) {
+  const copies = u.copies ?? [];
+  const working = copies.reduce((t, c) => t + c.amount, 0);
+  const pnl = copies.reduce((t, c) => t + c.pnl, 0);
+  const started = u.log.find((l) => /^(Bot switched on|Autopilot on)/.test(l.text))?.at; // newest first: this run's start
+  return {
+    ret: working > 0 ? Math.round((pnl / working) * 1e5) / 1e5 : 0,
+    traders: copies.length,
+    since: started ?? u.createdAt,
+    risk: u.rules!.risk,
+    goal: u.rules!.goal,
+    markets: u.rules!.markets,
+    mode: u.mode,
+    at: u.lastSyncAt ?? null,
+  };
+}
+
 function impactSummary(now: number) {
   const users = Object.values(autoStore.users);
   const vol = users.flatMap((u) => Object.values(u.volume ?? {}));

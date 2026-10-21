@@ -59,6 +59,7 @@ export function StatusCard({
   onRestart,
   onWithdraw,
   onDeposit,
+  onShare,
 }: {
   v: BotView;
   busy: boolean;
@@ -68,6 +69,7 @@ export function StatusCard({
   onRestart?: () => void;
   onWithdraw?: () => void;
   onDeposit?: () => void;
+  onShare?: () => void;
 }) {
   // The demo's profit is its balance against the $1,000 start (no rounding drift between the two).
   const profit = v.demo && v.balance !== null ? v.balance - 1_000 : v.copies.reduce((t, c) => t + c.pnl, 0);
@@ -104,6 +106,11 @@ export function StatusCard({
           {onWithdraw && (
             <button onClick={onWithdraw} className="glass rounded-full px-4 py-2 text-sm">
               Withdraw
+            </button>
+          )}
+          {onShare && (
+            <button onClick={onShare} className="glass rounded-full px-4 py-2 text-sm">
+              Share
             </button>
           )}
           <button onClick={onEdit} className="glass rounded-full px-4 py-2 text-sm">Edit rules</button>

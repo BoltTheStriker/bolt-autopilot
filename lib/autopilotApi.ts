@@ -97,6 +97,8 @@ export const autopilot = {
   me: (s: Session) => call<AutoMe>("me", s),
   rules: (s: Session, rules: AutoRules) => call<{ user: AutoUserView; rulesText: string }>("rules", { ...s, rules }),
   mode: (s: Session, mode: AutoMode) => call<{ user: AutoUserView }>("mode", { ...s, mode }),
+  /** This account's share id for its public result card (made once, then reused). */
+  share: (s: Session) => call<{ id: string }>("share", s),
   deposit: (s: Session, amount: number, utxos: string[], asset: "ADA" | "sUSDrf" = "ADA") =>
     call<{ requestId: string; usd: number; unsignedTx: string }>("deposit", { ...s, amount, asset, utxos }),
   depositSubmit: (s: Session, requestId: string, txHash: string) => call<{ status: string }>("deposit/submit", { ...s, requestId, txHash }),

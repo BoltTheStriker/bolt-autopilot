@@ -36,7 +36,7 @@ Strike stays the engine, the custody and the source of truth. Bolt is the layer 
 
 | Part | Path |
 |---|---|
-| Autopilot pages (landing, app, impact) | `app/autopilot/`, `components/autopilot/` |
+| Autopilot pages (landing, app, impact, share) | `app/autopilot/`, `components/autopilot/` |
 | Wallet, signing and Cardano transactions (CIP-30) | `lib/wallet.ts`, `lib/cardanoTx.ts`, `lib/cardanoValue.ts` |
 | Client for the worker's Autopilot API | `lib/autopilotApi.ts`, `lib/autopilotDemo.ts` |
 | Rules, risk levels, trader picking | `worker/autopilot.ts` |

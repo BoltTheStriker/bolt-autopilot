@@ -1,6 +1,7 @@
 import { ImageResponse } from "next/og";
 import { site } from "@/lib/config";
 import { fetchT } from "@/lib/fetchT";
+import { ogFont as font } from "@/lib/ogFont";
 
 // PnL card for a holder's demo account, used as the share link's preview image on X
 // (and as a downloadable PNG). Numbers come from the bot server, so the link can't fake them.
@@ -11,17 +12,6 @@ const MINT = "#4efab0";
 const NEG = "#f43f5e";
 const usd = (v: number) => `$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const day = (ms: number) => new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
-
-/** Space Grotesk from Google Fonts (TTF, only the glyphs used); falls back to the default font. */
-async function font(weight: number, text: string): Promise<ArrayBuffer | null> {
-  try {
-    const css = await (await fetchT(`https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@${weight}&text=${encodeURIComponent(text)}`)).text();
-    const url = css.match(/src: url\((.+?)\) format\('(opentype|truetype)'\)/)?.[1];
-    return url ? await (await fetchT(url)).arrayBuffer() : null;
-  } catch {
-    return null;
-  }
-}
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

@@ -12,7 +12,9 @@ import { connectAddress, installedWallets, signAndSubmit, signText, walletBalanc
 import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, type AutoRules, type LiveMark } from "@/worker/autopilot";
 import { CopilotPanel } from "./Copilot";
 import { SUSDRF_UNIT, type RealFiActions } from "./RealFi";
+import { encodeDemoCard, GOAL_LABEL, RISK_LABEL } from "@/lib/autopilotShare";
 import { DepositModal } from "./Deposit";
+import { ShareModal, type ShareSource } from "./Share";
 import { StrikeMark } from "./strike";
 import { WithdrawModal } from "./Withdraw";
 import { Activity, Allocation, EarnPanel, StatusCard, TabBar, TradersList, Transfers, type BotView, type Tab } from "./dashboard";
@@ -80,6 +82,7 @@ export function AutopilotApp() {
   const [tour, setTour] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [share, setShare] = useState<ShareSource | null>(null); // the result card, as it was when Share was tapped
   // The deposit this browser just sent (until Strike credits it), so the page can say it's on its way.
   const [sentDeposit, setSentDeposit] = useState<{ amount: number; asset: string; txHash: string; at: number; before: number } | null>(null);
   const [depositOpen, setDepositOpen] = useState(false);
@@ -319,6 +322,34 @@ export function AutopilotApp() {
     };
   }, [demoOn, demo, marks, me]);
 
+  // A snapshot of the result for its share card: the demo against its $1,000, a real account on its running copies.
+  const shareNow = (): ShareSource | null => {
+    if (!view) return null;
+    const pct = (r: number) => `${r >= 0 ? "+" : "−"}${Math.abs(r * 100).toFixed(2)}%`;
+    const n = view.copies.length;
+    if (view.demo && demo.rules && demo.live && view.balance !== null) {
+      const pnl = view.balance - DEMO_BALANCE;
+      const ret = pnl / DEMO_BALANCE;
+      const since = new Date(demo.live.startedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      return {
+        kind: "demo",
+        d: encodeDemoCard({ ret, pnl, traders: n, since: demo.live.startedAt, risk: demo.rules.risk, goal: demo.rules.goal, markets: demo.rules.markets, curve: view.curve ?? [] }),
+        text: `My Bolt Autopilot demo: ${pct(ret)} since ${since}, copying ${n} trader${n === 1 ? "" : "s"} on Strike. Try it with demo money:`,
+      };
+    }
+    if (!view.demo && session && user?.rules && n > 0) {
+      const working = view.copies.reduce((t, c) => t + c.amount, 0);
+      const ret = working > 0 ? view.copies.reduce((t, c) => t + c.pnl, 0) / working : 0;
+      const s = session;
+      return {
+        kind: "real",
+        getId: () => autopilot.share(s).then((r) => r.id),
+        text: `My Bolt Autopilot on Strike: ${pct(ret)} on my running copies, ${n} trader${n === 1 ? "" : "s"}, ${RISK_LABEL[user.rules.risk].toLowerCase()}, ${GOAL_LABEL[user.rules.goal].toLowerCase()}.`,
+      };
+    }
+    return null;
+  };
+
   async function saveRules(rules: AutoRules) {
     if (demoOn) {
       setEditing(false);
@@ -523,6 +554,7 @@ export function AutopilotApp() {
                       onRestart={() => void runDemo(demo.rules!, demo.mode === "off" ? "on" : demo.mode, "Demo restarted.")}
                       onWithdraw={!demoOn && session ? () => setWithdrawOpen(true) : undefined}
                       onDeposit={!demoOn && session ? () => (setError(""), setDepositOpen(true)) : undefined}
+                      onShare={view.copies.length > 0 ? () => setShare(shareNow()) : undefined}
                     />
                     <div className="grid gap-4 xl:grid-cols-2">
                       <TradersList v={view} limit={3} />
@@ -581,6 +613,7 @@ export function AutopilotApp() {
       </div>
 
       <Tour steps={TOUR} open={tour} onClose={() => setTour(false)} />
+      <ShareModal open={!!share} source={share} onClose={() => setShare(null)} />
       {session && me && <DepositModal open={depositOpen} wallets={myWallets} busy={busy === "deposit"} error={depositOpen ? error : ""} onDeposit={depositAda} onClose={() => (setDepositOpen(false), setError(""))} />}
       {session && me && (
         <WithdrawModal

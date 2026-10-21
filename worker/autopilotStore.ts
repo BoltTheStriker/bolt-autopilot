@@ -31,6 +31,7 @@ export type AutoUser = {
   cooldown?: Record<string, number>; // lead → until when not to retry after Strike refused a copy
   volume?: Record<string, { usd: number; orders: number }>; // subscription id → traded volume (kept after the copy ends)
   haltedDay?: string; // daily loss limit hit on this UTC day
+  shareId?: string; // 12 hex: the public result card's id, made when the user first shares
   lastSyncAt?: number;
   lastError?: string;
 };
