@@ -1,0 +1,4 @@
+{
+  "_readme": "Buybacks & burns only (copy-trade numbers come live from Strike, holder rewards from Solada). Append one entry per burn, newest last: amount = tokens burned, ada = copy-trade profit ADA spent on the buyback.",
+  "burns": []
+}

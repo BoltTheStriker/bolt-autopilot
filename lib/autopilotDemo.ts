@@ -1,0 +1,127 @@
+// Demo mode: $1,000 of pretend money that starts when you press Start and then moves live with
+// the traders the real engine picked for your rules. Each copy follows its trader's trading
+// profit since your start (closed trades net of fees + open positions) divided by their account
+// size, the way Strike sizes copies. Your stop-losses, profit lock and daily limit apply.
+// An estimate on pretend money: real copies also pay fees and can fill differently.
+import type { AutoCopy } from "./autopilotApi.ts";
+import { copySpecs, pickTraders, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "../worker/autopilot.ts";
+
+export const DEMO_BALANCE = 1_000;
+const MAX_POINTS = 1_500;
+
+export type DemoCopy = {
+  lead: string;
+  amount: number;
+  mult: number; // 2× sizing on High risk
+  acct: number; // the trader's account value at the start (copy-sizing base)
+  basePnl: number; // their profit figure when this stretch started
+  baseSince: number; // the feed's watch-start stamp (changes if the feed restarts)
+  carried: number; // return carried over a feed restart
+  ret: number; // latest return of this copy
+  banked: number; // profit locked in so far
+  stopped: number | null; // when its stop-loss closed it
+  open: string[]; // the trader's open positions last time we looked
+};
+export type DemoLive = {
+  startedAt: number;
+  copies: DemoCopy[];
+  log: { at: number; text: string }[];
+  curve: [number, number][];
+  dayStart: number;
+  dayStartValue: number;
+  haltedDay: number | null;
+};
+
+const posKey = (p: { coin: string; long: boolean }) => `${p.coin}:${p.long ? "L" : "S"}`;
+const name = (coin: string) => coin.replace(/^xyz:/, "");
+const money = (v: number) => `$${Math.abs(v).toFixed(2)}`;
+const dayOf = (t: number) => Math.floor(t / 86_400_000);
+
+export function copyValue(c: DemoCopy, stopLossPct: number): number {
+  return c.stopped !== null ? c.amount * (1 - stopLossPct) : c.amount * (1 + c.ret);
+}
+export function demoValue(d: DemoLive, stopLossPct: number): number {
+  const working = d.copies.reduce((t, c) => t + c.amount, 0);
+  return DEMO_BALANCE - working + d.copies.reduce((t, c) => t + copyValue(c, stopLossPct) + c.banked, 0);
+}
+
+/** Start: the engine's picks for these rules (traders with a live feed), sized like the real bot. */
+export function startDemo(traders: PreviewTrader[], marks: Record<string, LiveMark>, rules: AutoRules, now: number): DemoLive {
+  const live = traders.filter((t) => (marks[t.lead]?.acct ?? 0) > 0);
+  const specs = copySpecs(pickTraders(live, rules), rules, []);
+  const mult = RISK_LEVELS[rules.risk].multiplier;
+  const copies: DemoCopy[] = specs.map((s) => {
+    const m = marks[s.lead];
+    return { lead: s.lead, amount: s.amount, mult, acct: m.acct, basePnl: m.pnl, baseSince: m.since, carried: 0, ret: 0, banked: 0, stopped: null, open: m.positions.map(posKey) };
+  });
+  const log = [
+    { at: now, text: `Demo started with $${DEMO_BALANCE.toLocaleString("en-US")}: copying ${copies.length} trader${copies.length === 1 ? "" : "s"}.` },
+    ...copies.map((c) => ({ at: now, text: `Copying ${c.lead} with $${c.amount.toFixed(0)} (stops at −$${(c.amount * rules.stopLossPct).toFixed(0)}).` })),
+  ];
+  return { startedAt: now, copies, log, curve: [[now, DEMO_BALANCE]], dayStart: dayOf(now), dayStartValue: DEMO_BALANCE, haltedDay: null };
+}
+
+/** Move the demo to the latest marks. Pure: returns a new state. */
+export function stepDemo(prev: DemoLive, marks: Record<string, LiveMark>, rules: AutoRules, now: number): DemoLive {
+  const d: DemoLive = { ...prev, copies: prev.copies.map((c) => ({ ...c })), log: [...prev.log], curve: [...prev.curve] };
+  const say = (text: string) => d.log.unshift({ at: now, text });
+  if (dayOf(now) !== d.dayStart) {
+    d.dayStart = dayOf(now);
+    d.dayStartValue = demoValue(d, rules.stopLossPct);
+  }
+  const halted = d.haltedDay === d.dayStart;
+  for (const c of d.copies) {
+    const m = marks[c.lead];
+    if (!m || c.stopped !== null || halted) continue;
+    if (m.since !== c.baseSince) {
+      // The feed restarted: keep what this copy made so far and continue from the new baseline.
+      c.carried = c.ret;
+      c.basePnl = m.pnl;
+      c.baseSince = m.since;
+    }
+    c.ret = c.carried + ((m.pnl - c.basePnl) / c.acct) * c.mult;
+    // What the trader did since we last looked.
+    const open = m.positions.map(posKey);
+    const opened = m.positions.filter((p) => !c.open.includes(posKey(p)));
+    const closed = c.open.filter((k) => !open.includes(k));
+    for (const p of opened.slice(0, 3)) say(`${c.lead} opened ${name(p.coin)} ${p.long ? "long" : "short"}: your copy follows.`);
+    for (const k of closed.slice(0, 3)) say(`${c.lead} closed ${name(k.slice(0, k.lastIndexOf(":")))} ${k.endsWith(":L") ? "long" : "short"}.`);
+    c.open = open;
+    if (c.ret <= -rules.stopLossPct) {
+      c.stopped = now;
+      say(`Stop-loss: copy of ${c.lead} closed at −${money(c.amount * rules.stopLossPct)}. The rest kept running.`);
+    } else if (rules.profitLockPct && c.ret >= rules.profitLockPct) {
+      const gain = c.amount * c.ret;
+      c.banked += gain;
+      say(`Profit locked: banked +${money(gain)} from ${c.lead}, then copied them again fresh.`);
+      c.carried = 0;
+      c.ret = 0;
+      c.basePnl = m.pnl;
+    }
+  }
+  const value = demoValue(d, rules.stopLossPct);
+  if (!halted && value <= d.dayStartValue * (1 - rules.dailyLossPct)) {
+    d.haltedDay = d.dayStart;
+    say(`Daily loss limit (−${Math.round(rules.dailyLossPct * 100)}%) reached: copying paused until tomorrow.`);
+  }
+  const last = d.curve.at(-1);
+  if (!last || now - last[0] >= 30_000) d.curve.push([now, Math.round(value * 100) / 100]);
+  if (d.curve.length > MAX_POINTS) d.curve.splice(1, d.curve.length - MAX_POINTS); // keep the start point
+  if (d.log.length > 200) d.log.length = 200;
+  return d;
+}
+
+/** The dashboard's copies: each copy's profit, and the trader's open positions scaled to the copy. */
+export function demoCopies(d: DemoLive, marks: Record<string, LiveMark>, stopLossPct: number): (AutoCopy & { stopped: boolean })[] {
+  return d.copies.map((c) => {
+    const m = marks[c.lead];
+    const scale = (c.amount / c.acct) * c.mult;
+    return {
+      lead: c.lead,
+      amount: c.amount,
+      pnl: Math.round((copyValue(c, stopLossPct) - c.amount + c.banked) * 100) / 100,
+      positions: c.stopped !== null || !m ? [] : m.positions.map((p) => ({ market: p.coin, long: p.long, pnl: Math.round(p.pnl * scale * 100) / 100 })),
+      stopped: c.stopped !== null,
+    };
+  });
+}

@@ -1,0 +1,11 @@
+# Railway only builds the bot worker; upload just what worker/Dockerfile copies.
+*
+!bot/
+!bot/**
+!worker/
+!worker/**
+!data/
+!data/bot-state.json
+!railway.json
+# Installed in the image from worker/package-lock.json, not uploaded.
+worker/node_modules/

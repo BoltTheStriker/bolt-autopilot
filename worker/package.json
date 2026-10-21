@@ -1,0 +1,9 @@
+{
+  "name": "bolt-worker",
+  "private": true,
+  "type": "module",
+  "description": "Runtime dependencies of the bot worker (the Docker image installs only these).",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.137.0"
+  }
+}

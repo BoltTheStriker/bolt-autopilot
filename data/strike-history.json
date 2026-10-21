@@ -1,0 +1,32 @@
+[
+  {
+    "date": "2026-10-17",
+    "equity": 499.97,
+    "netDeposited": 502.37,
+    "pnl": -2.4
+  },
+  {
+    "date": "2026-10-18",
+    "equity": 502.63,
+    "netDeposited": 502.37,
+    "pnl": 0.26
+  },
+  {
+    "date": "2026-10-19",
+    "equity": 760.9,
+    "netDeposited": 759.65,
+    "pnl": 1.25
+  },
+  {
+    "date": "2026-10-20",
+    "equity": 762.64,
+    "netDeposited": 759.65,
+    "pnl": 2.99
+  },
+  {
+    "date": "2026-10-21",
+    "equity": 747.76,
+    "netDeposited": 748.64,
+    "pnl": -0.87
+  }
+]

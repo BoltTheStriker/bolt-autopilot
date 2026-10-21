@@ -1,0 +1,162 @@
+{
+ "mode": "simulate",
+ "startedAt": 1791929962692,
+ "startingCapital": 1000,
+ "cash": 1.1368683772161603e-13,
+ "positions": [
+  {
+   "lead": "0x3e7c16408c6691e0218167cee78bec7ebad03909",
+   "openedAt": 1791929962692,
+   "cost": 333.3333333333333,
+   "value": 334.05042728795684,
+   "peak": 334.05042728795684,
+   "fees": 2.7908019389519185,
+   "score": 0.9047043726511294,
+   "coverage": 0.905432,
+   "mark": {
+    "pnlAll": 21308.153184,
+    "volumeAll": 58993590.65,
+    "accountValue": 15560.890641,
+    "at": 1791967906878
+   }
+  },
+  {
+   "lead": "0xf12474d3dc642f9712d94643477affebeebcd738",
+   "openedAt": 1791929962692,
+   "cost": 333.3333333333333,
+   "value": 332.75619840530726,
+   "peak": 333.3333333333333,
+   "fees": 1.6134081729469238,
+   "score": 0.8453196875889558,
+   "coverage": 0.909858,
+   "mark": {
+    "pnlAll": 118381.011283,
+    "volumeAll": 355770514.24,
+    "accountValue": 120922.705516,
+    "at": 1791967906878
+   }
+  },
+  {
+   "lead": "0x29e1b9269d5f36d6e3e32ddb678bc99bb64ae415",
+   "openedAt": 1791929962692,
+   "cost": 333.3333333333333,
+   "value": 333.31352015296386,
+   "peak": 333.3333333333333,
+   "fees": 0,
+   "score": 0.836657230669781,
+   "coverage": 0.989085,
+   "mark": {
+    "pnlAll": 138865.26948,
+    "volumeAll": 121123565.94,
+    "accountValue": 46281.931466,
+    "at": 1791967906878
+   }
+  }
+ ],
+ "closed": [],
+ "cooldowns": {},
+ "decisions": [
+  {
+   "at": 1791929962692,
+   "action": "info",
+   "detail": "Simulation started with $1,000 paper capital."
+  },
+  {
+   "at": 1791929962692,
+   "action": "open",
+   "lead": "0x3e7c16408c6691e0218167cee78bec7ebad03909",
+   "detail": "Copying 0x3e7c…3909 with $333: score 0.90, 30d ROI 137.1%, drawdown 0.4%, 90.5% of trades copyable."
+  },
+  {
+   "at": 1791929962692,
+   "action": "open",
+   "lead": "0xf12474d3dc642f9712d94643477affebeebcd738",
+   "detail": "Copying 0xf124…d738 with $333: score 0.85, 30d ROI 60.6%, drawdown 0.9%, 91.0% of trades copyable."
+  },
+  {
+   "at": 1791929962692,
+   "action": "open",
+   "lead": "0x29e1b9269d5f36d6e3e32ddb678bc99bb64ae415",
+   "detail": "Copying 0x29e1…e415 with $333: score 0.84, 30d ROI 50.4%, drawdown 0.1%, 98.9% of trades copyable."
+  }
+ ],
+ "equity": [
+  {
+   "at": 1791929962692,
+   "value": 1000
+  },
+  {
+   "at": 1791929962692,
+   "value": 1000.0000000000001
+  },
+  {
+   "at": 1791929994554,
+   "value": 1000.0000000000001
+  },
+  {
+   "at": 1791930195142,
+   "value": 1000.0000000000001
+  },
+  {
+   "at": 1791946243964,
+   "value": 1000.1201458462281
+  },
+  {
+   "at": 1791946299058,
+   "value": 1000.1201458462281
+  },
+  {
+   "at": 1791967906878,
+   "value": 1000.1201458462281
+  }
+ ],
+ "lastRunAt": 1791967906878,
+ "lastScan": {
+  "at": 1791967906878,
+  "checked": 100,
+  "eligible": 19,
+  "rejections": {
+   "30d ROI too low": 25,
+   "too few trades copyable at our size": 27,
+   "not trading recently": 21,
+   "style market_maker": 2,
+   "Strike doesn't recommend copying": 2,
+   "account too small": 1
+  },
+  "moves": [
+   {
+    "lead": "0x3e7c16408c6691e0218167cee78bec7ebad03909",
+    "change": 0,
+    "value": 334.05042728795684
+   },
+   {
+    "lead": "0xf12474d3dc642f9712d94643477affebeebcd738",
+    "change": 0,
+    "value": 332.75619840530726
+   },
+   {
+    "lead": "0x29e1b9269d5f36d6e3e32ddb678bc99bb64ae415",
+    "change": 0,
+    "value": 333.31352015296386
+   }
+  ],
+  "nextUp": [
+   {
+    "lead": "0x10d11287eba086fd52ae41821fdb8d7e612eafdc",
+    "score": 0.8394047295300148,
+    "roi30d": 1.691481
+   },
+   {
+    "lead": "0x6f0306dc529cfeb8e08502e5eb7a588def9ac88d",
+    "score": 0.7304912557488911,
+    "roi30d": 0.851493
+   },
+   {
+    "lead": "0x74883f76a1ed9fb1837b98270dc9ef22f903dd09",
+    "score": 0.7200841969864882,
+    "roi30d": 0.256742
+   }
+  ],
+  "weakestHeldScore": 0.8145146152532656
+ }
+}
