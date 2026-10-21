@@ -10,12 +10,13 @@
 ## What it does
 
 1. **One-signature onboarding.** A Cardano wallet signs once and Strike opens the user's account (or links an existing one) through Strike's builder program. The API key Bolt receives can trade but never withdraw.
-2. **Goals become rules.** Risk (Low, Medium, High), goal (Steady, Balanced, Growth) and markets (all, crypto, or real-world) set the budget at work, a leverage cap, a stop-loss on every copy and a daily loss limit, all enforced on Strike.
+2. **Goals become rules, previewed first.** Risk (Low, Medium, High), goal (Steady, Balanced, Growth) and markets (all, crypto, or real-world) set the budget at work, a leverage cap, a stop-loss on every copy and a daily loss limit, all enforced on Strike. The panel replays the bot's current picks for those rules over the last 7 days before any money moves.
 3. **A ranked engine.** Every hour it ranks Strike's top traders by return per unit of drawdown times consistency. It keeps only traders a copy can follow at the user's size, who are active and who trade markets Strike lists, and it holds what works instead of churning.
 4. **AI copilot.** Users describe what they want; the copilot reads the bot's traders and Strike's live Earn rates and proposes a full rule set. Nothing changes until the user taps Apply.
-5. **Earn with RealFi on Strike.** Spare money can earn RealFi's sUSDrf yield inside Strike's Borrow & Earn; Bolt shows both yields, deposits sUSDrf in one signature and tracks the position.
-6. **Deposit and withdraw inside Bolt.** ADA in with one signature; withdrawals go only to the wallet registered on the account, with its signature.
-7. **Live demo.** $1,000 of pretend money that moves with the picked traders' live trading, so anyone can try it without a wallet.
+5. **AI Autopilot, inside hard limits.** In Autopilot mode Claude reviews the bot when something calls for it (a trader leaving the ranking, a copy near its stop-loss, losses near the daily limit, a daily check) and may swap a trader or step risk down. A validator clamps anything looser than the user's own settings; every change is logged with its reason; a plain-rules version takes over if Claude is unavailable.
+6. **Earn with RealFi on Strike.** Spare money can earn RealFi's sUSDrf yield inside Strike's Borrow & Earn; Bolt shows both yields, deposits sUSDrf in one signature and tracks the position.
+7. **Deposit and withdraw inside Bolt.** ADA in with one signature; withdrawals go only to the wallet registered on the account, with its signature.
+8. **Live demo.** $1,000 of pretend money that moves with the picked traders' live trading, so anyone can try it without a wallet.
 
 ## How it works
 
@@ -44,6 +45,9 @@ Strike stays the engine, the custody and the source of truth. Bolt is the layer 
 | Strike API client (Ed25519 API-wallet signing) | `worker/strike-live.ts` |
 | Encrypted per-user store | `worker/autopilotStore.ts` |
 | Copilot (tools, rate limits, proposal-only) | `worker/copilot.ts` |
+| AI Autopilot (signals, Claude's decision, the limits validator) | `worker/autotune.ts` |
+| "If you'd started 7 days ago" replay | `lib/rulesReplay.ts` |
+| Bolt vs the leaderboard benchmark (run every 6 hours) | `bot/benchmark.ts`, `data/benchmark.json`, `app/api/benchmark/` |
 | HTTP routes | `worker/index.ts` |
 | Ranking strategy and backtests, shared with the live $BOLT bot | `bot/strategy.ts`, `bot/backtest*.ts` |
 
