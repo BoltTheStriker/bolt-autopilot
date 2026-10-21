@@ -103,9 +103,10 @@ export async function walletUtxos(key: string): Promise<string[]> {
 }
 
 /** Signs a transaction Strike built, adds the signature without re-encoding it, and submits it. Returns the tx hash. */
-export async function signAndSubmit(key: string, unsignedTx: string): Promise<string> {
+export async function signAndSubmit(key: string, unsignedTx: string, onSigned?: () => void): Promise<string> {
   const api = await window.cardano![key].enable();
   const witnesses = await api.signTx(unsignedTx, true);
+  onSigned?.(); // the wallet signed; what's left is sending it
   const { addWitnesses } = await import("./cardanoTx");
   return api.submitTx(addWitnesses(unsignedTx, witnesses));
 }

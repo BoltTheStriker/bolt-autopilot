@@ -13,7 +13,7 @@ import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, type AutoRules,
 import { CopilotPanel } from "./Copilot";
 import { SUSDRF_UNIT, type RealFiActions } from "./RealFi";
 import { encodeDemoCard, GOAL_LABEL, RISK_LABEL } from "@/lib/autopilotShare";
-import { DepositModal } from "./Deposit";
+import { DepositModal, type DepositStage } from "./Deposit";
 import { ShareModal, type ShareSource } from "./Share";
 import { StrikeMark } from "./strike";
 import { WithdrawModal } from "./Withdraw";
@@ -407,20 +407,22 @@ export function AutopilotApp() {
     setTab("overview");
   };
 
-  /** ADA from the wallet to the Strike account (setup's Fund step and the dashboard's Deposit). True when sent. */
-  async function depositAda(key: string, ada: number): Promise<boolean> {
-    let ok = false;
+  /** ADA from the wallet to the Strike account (setup's Fund step and the dashboard's Deposit). The tx hash when sent. */
+  async function depositAda(key: string, ada: number, onStage?: (s: DepositStage) => void): Promise<string | null> {
+    let sent: string | null = null;
     await run("deposit", async () => {
+      onStage?.("prepare");
       const utxos = await walletUtxos(key);
       const d = await autopilot.deposit(session!, ada, utxos, "ADA");
-      const hash = await signAndSubmit(key, d.unsignedTx);
+      onStage?.("sign");
+      const hash = await signAndSubmit(key, d.unsignedTx, () => onStage?.("send"));
       rememberWallet(key);
       setSentDeposit({ amount: ada, asset: "ADA", txHash: hash, at: Date.now(), before: me?.balance?.wallet ?? 0 });
       await autopilot.depositSubmit(session!, d.requestId, hash);
-      await refresh(session);
-      ok = true;
+      sent = hash;
+      void refresh(session); // the pending deposit shows on the dashboard; no need to wait for it here
     });
-    return ok;
+    return sent;
   }
 
   // RealFi actions for a real, connected account (the demo shows the numbers only).
