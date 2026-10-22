@@ -500,7 +500,7 @@ const AUTO = {
   feeBps: Number(process.env.STRIKE_BUILDER_FEE_BPS ?? 0),
   maxBudgetUsd: Math.min(Number(process.env.AUTOPILOT_MAX_BUDGET_USD ?? BETA_MAX_BUDGET_USD), 5_000),
   public: process.env.AUTOPILOT_PUBLIC === "1", // off: private beta, only an admin can connect new accounts
-  syncMs: 5 * 60_000,
+  syncMs: 2 * 60_000, // users' copies are re-read (and their profit charted) this often
   slot: 500, // largest copy size the trader list is judged at; each user's picks are checked at their own size
 };
 const autoOn = () => Boolean(AUTO.builderCode && AUTO.secret.length >= 32);

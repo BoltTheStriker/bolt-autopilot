@@ -39,6 +39,8 @@ export type AutoUser = {
   drops?: Drops;
   reviewedAt?: number;
   reviews?: { day: string; n: number };
+  /** Profit on the running copies at each sync (for the dashboard's chart), newest last, at most 1,000. */
+  history?: { at: number; pnl: number; working: number }[];
   lastSyncAt?: number;
   lastError?: string;
 };
@@ -107,9 +109,17 @@ export function logUser(u: AutoUser, now: number, text: string) {
   u.log = [{ at: now, text }, ...u.log].slice(0, 100);
 }
 
+/** At most n points, evenly spread, the newest kept. */
+function thin<T>(xs: T[], n: number): T[] {
+  if (xs.length <= n) return xs;
+  const step = xs.length / n;
+  return [...Array.from({ length: n - 1 }, (_, i) => xs[Math.floor(i * step)]), xs[xs.length - 1]];
+}
+
 /** What the user's own page may show: never the keys or session hashes. */
 export function publicUser(u: AutoUser) {
   return { address: u.address, accountId: u.accountId, network: u.network, createdAt: u.createdAt, rules: u.rules, mode: u.mode, copies: u.copies ?? [], log: u.log.slice(0, 40), lastSyncAt: u.lastSyncAt, lastError: u.lastError, idle: u.idle ?? null,
     // What Autopilot runs with right now, when it changed something (always inside the user's rules).
-    autopilot: u.tuned ? { rulesText: describeRules(u.tuned.rules), reason: u.tuned.reason, at: u.tuned.at } : null, reviewedAt: u.reviewedAt ?? null };
+    autopilot: u.tuned ? { rulesText: describeRules(u.tuned.rules), reason: u.tuned.reason, at: u.tuned.at } : null, reviewedAt: u.reviewedAt ?? null,
+    history: thin(u.history ?? [], 300) };
 }

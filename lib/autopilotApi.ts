@@ -19,6 +19,7 @@ export type AutoUserView = {
   idle?: string | null; // why the bot is on but copies nothing yet
   autopilot?: { rulesText: string; reason: string; at: number } | null; // what Autopilot runs with, when it changed something
   reviewedAt?: number | null; // Autopilot's last check
+  history?: { at: number; pnl: number; working: number }[]; // profit on the running copies at each sync
 };
 export type AutoMe = {
   user: AutoUserView;

@@ -22,7 +22,13 @@ export function ShareModal({ open, source, onClose }: { open: boolean; source: S
     let alive = true;
     source.getId().then(
       (id) => alive && setQuery(`id=${id}`),
-      () => alive && setError("Couldn't make your share link right now. Try again in a minute."),
+      (e: { status?: number }) =>
+        alive &&
+        setError(
+          e?.status && [401, 404, 405].includes(e.status)
+            ? "Real-result cards switch on with the server update that's rolling out. The demo card works now."
+            : "Couldn't make your share link right now. Try again in a minute.",
+        ),
     );
     return () => {
       alive = false;

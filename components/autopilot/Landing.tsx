@@ -2,7 +2,6 @@
 
 // The Autopilot product page: what it does, how your money stays safe, the copilot, and the setup itself (#start).
 import Image from "next/image";
-import Link from "next/link";
 import { motion } from "motion/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { autopilot, type AutoStatus, type SlpInfo } from "@/lib/autopilotApi";

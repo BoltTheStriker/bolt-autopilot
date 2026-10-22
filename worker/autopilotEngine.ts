@@ -88,6 +88,13 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
     });
     // Daily loss limit: today's change in the copies' profit, against the budget.
     const pnl = u.copies.reduce((t, c) => t + c.pnl, 0);
+    // The dashboard's chart: profit on the running copies at each sync (while the bot runs or holds copies).
+    if (u.mode !== "off" || u.copies.length) {
+      u.history ??= [];
+      if (!u.history.length || now - u.history[u.history.length - 1].at >= 60_000)
+        u.history.push({ at: now, pnl: Math.round(pnl * 100) / 100, working: Math.round(u.copies.reduce((t, c) => t + c.amount, 0) * 100) / 100 });
+      if (u.history.length > 1_000) u.history.splice(0, u.history.length - 1_000);
+    }
     if (u.dayStart?.day !== today(now)) u.dayStart = { day: today(now), pnl };
     const limit = u.rules ? u.rules.dailyLossPct * u.rules.budgetUsd : Infinity;
     if (u.haltedDay !== today(now) && u.dayStart.pnl - pnl > limit) {

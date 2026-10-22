@@ -34,6 +34,7 @@ export type BotView = {
   idle?: string | null; // real: the bot is on but copies nothing yet, and why (null: still looking)
   /** Autopilot mode: its latest action, the rules it runs with when they differ from the user's, its last check. */
   autopilot?: { reason: string | null; rulesText: string | null; at: number | null; checkedAt: number | null };
+  syncedAt?: number | null; // real: when the server last read the copies from Strike
 };
 
 const STRIKE_VAULTS = "https://app.strikefinance.org/vaults";
@@ -78,6 +79,8 @@ export function StatusCard({
   // The demo's profit is its balance against the $1,000 start (no rounding drift between the two).
   const profit = v.demo && v.balance !== null ? v.balance - 1_000 : v.copies.reduce((t, c) => t + c.pnl, 0);
   const working = v.copies.reduce((t, c) => t + c.amount, 0);
+  // The same profit as a share: of the $1,000 in the demo, of the money in the copies for a real account.
+  const profitPct = v.demo ? profit / 1_000 : working > 0 ? profit / working : null;
   const title = v.mode === "off" ? "Bot is off" : v.halted ? "Paused for today (daily limit)" : v.demo ? "Demo bot is running" : v.copies.length === 0 && !v.idle ? "Your bot is starting" : v.mode === "autopilot" ? "Autopilot is running" : "Your bot is running";
   return (
     <section className="card relative overflow-hidden rounded-3xl p-6 sm:p-7" data-tour="overview">
@@ -144,7 +147,10 @@ export function StatusCard({
         <Stat label="Working in copies" value={usd(working)} />
         <div className={`group relative rounded-xl border border-mint/25 bg-mint/[0.06] px-3 py-2.5 transition ${onShare ? "hover:border-mint/50 hover:bg-mint/[0.1]" : ""}`}>
           <p className="pr-8 text-[11px] text-muted">{v.demo ? "Profit since start" : "Profit on copies"}</p>
-          <p className={`mt-0.5 font-mono text-lg ${profit >= 0 ? "text-mint" : "text-neg"}`}>{signed(profit)}</p>
+          <p className={`mt-0.5 font-mono text-lg ${profit >= 0 ? "text-mint" : "text-neg"}`}>
+            {signed(profit)}
+            {profitPct !== null && <span className="ml-1.5 text-sm opacity-80">{`${profitPct >= 0 ? "+" : "−"}${Math.abs(profitPct * 100).toFixed(2)}%`}</span>}
+          </p>
           {onShare && (
             <button
               onClick={onShare}
@@ -220,7 +226,9 @@ export function StatusCard({
         </div>
       )}
       {v.curve && v.curve.length > 1 ? (
-        <Curve values={v.curve} from={v.startedAt ? `Started ${time(v.startedAt)}` : "Start"} />
+        <Curve values={v.curve} from={v.startedAt ? `${v.demo ? "Started" : "Since"} ${time(v.startedAt)}` : "Start"} />
+      ) : !v.demo && v.mode !== "off" && v.copies.length ? (
+        <p className="relative mt-5 rounded-xl bg-white/[0.03] px-3 py-3 text-xs text-muted">The profit chart fills in from here, with each update from Strike.</p>
       ) : v.demo ? (
         <p className="relative mt-5 rounded-xl bg-white/[0.03] px-3 py-3 text-xs text-muted">Live from now: the chart fills in as your traders trade (updates about every minute).</p>
       ) : null}
@@ -229,6 +237,7 @@ export function StatusCard({
           {usd(v.parked!)} sits in a copy sub-account from the bot&apos;s first version: {v.mode === "off" ? "start the bot to reuse it, or move it to your main account in Strike's app to withdraw it." : "your next copy reuses it."}
         </p>
       )}
+      {!v.demo && v.syncedAt ? <p className="relative mt-3 font-mono text-[10px] text-white/35">Updated from Strike at {time(v.syncedAt)} · refreshes by itself</p> : null}
       {v.rulesText && (
         <p className="relative mt-4 text-xs text-muted">
           {v.mode === "autopilot" && v.autopilot?.rulesText ? "Your limits: " : ""}
@@ -327,7 +336,8 @@ function Curve({ values, from }: { values: number[]; from: string }) {
           </linearGradient>
         </defs>
         <path d={`M0,40 L${pts.join(" L")} L100,40 Z`} fill="url(#demo-fill)" />
-        <motion.polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.2" vectorEffect="non-scaling-stroke" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.2 }} />
+        {/* A plain fade-in: a drawn-in path (pathLength) breaks into dashes with non-scaling strokes. */}
+        <motion.polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.8 }} />
       </svg>
       <div className="mt-1 flex justify-between font-mono text-[10px] text-white/35">
         <span>{from}</span>

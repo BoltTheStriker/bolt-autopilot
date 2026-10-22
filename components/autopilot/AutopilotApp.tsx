@@ -111,10 +111,29 @@ export function AutopilotApp() {
     return () => clearTimeout(t);
   }, [demoOn]);
 
+  // Profit history for the real dashboard's chart: the server keeps it (newer workers); this browser also
+  // records each update, so the chart works with an older worker too.
+  const [localHist, setLocalHist] = useState<{ at: number; pnl: number; working: number }[]>([]);
   const refresh = useCallback(async (s: Session | null) => {
     if (!s) return;
     try {
-      setMe(await autopilot.me(s));
+      const m = await autopilot.me(s);
+      setMe(m);
+      if (m.user.mode !== "off" || m.user.copies.length) {
+        const key = `bolt-autopilot-history-${m.user.accountId}`;
+        let hist: { at: number; pnl: number; working: number }[] = [];
+        try {
+          hist = JSON.parse(localStorage.getItem(key) ?? "[]");
+        } catch {}
+        const at = m.user.lastSyncAt ?? 0;
+        if (at && (!hist.length || hist[hist.length - 1].at < at)) {
+          hist = [...hist, { at, pnl: Math.round(m.user.copies.reduce((t, c) => t + c.pnl, 0) * 100) / 100, working: m.user.copies.reduce((t, c) => t + c.amount, 0) }].slice(-1_000);
+          try {
+            localStorage.setItem(key, JSON.stringify(hist));
+          } catch {}
+        }
+        setLocalHist(hist);
+      }
     } catch (e) {
       if ((e as { status?: number }).status === 401) {
         saveSession(null);
@@ -338,6 +357,12 @@ export function AutopilotApp() {
       parked: me.parked ?? 0,
       earn: me.earn ?? null,
       halted: me.user.log.some((l) => /Daily loss limit/.test(l.text) && (me.user.lastSyncAt ?? 0) - l.at < 86_400_000),
+      // The profit chart: the server's history when it has one, else what this browser recorded.
+      ...(() => {
+        const h = (me.user.history?.length ?? 0) >= 2 ? me.user.history! : localHist;
+        return h.length >= 2 ? { curve: h.map((p) => p.pnl), startedAt: h[0].at } : {};
+      })(),
+      syncedAt: me.user.lastSyncAt ?? null,
       autopilot:
         me.user.mode === "autopilot"
           ? { reason: me.user.autopilot?.reason ?? null, rulesText: me.user.autopilot?.rulesText ?? null, at: me.user.autopilot?.at ?? null, checkedAt: me.user.reviewedAt ?? null }
@@ -347,7 +372,7 @@ export function AutopilotApp() {
           ? (me.user.idle ?? (syncedSinceStart ? "The bot checked and hasn't started a copy yet. What it tried is under Activity; it tries again every few minutes." : null))
           : null,
     };
-  }, [demoOn, demo, marks, me, syncedSinceStart]);
+  }, [demoOn, demo, marks, me, syncedSinceStart, localHist]);
 
   // A snapshot of the result for its share card: the demo against its $1,000, a real account on its running copies.
   const shareNow = (): ShareSource | null => {
