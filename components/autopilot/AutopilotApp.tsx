@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { checkAdminKey, readAdminKey } from "@/lib/adminPreview";
 import { autopilot, saveSession, savedSession, type AutoMe, type AutoMode, type AutoStatus, type Session, type SlpInfo } from "@/lib/autopilotApi";
 import { DEMO_BALANCE, demoCopies, demoValue, startDemo as startLiveDemo, stepDemo, type DemoLive } from "@/lib/autopilotDemo";
-import { connectAddress, installedWallets, signAndSubmit, signText, walletBalance, walletUtxos, type InstalledWallet } from "@/lib/wallet";
+import { connectAddress, installedWallets, sameAccount, signAndSubmit, signText, walletBalance, walletUtxos, type InstalledWallet } from "@/lib/wallet";
 import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "@/worker/autopilot";
 import { CopilotPanel } from "./Copilot";
 import { SUSDRF_UNIT, type RealFiActions } from "./RealFi";
@@ -441,8 +441,17 @@ export function AutopilotApp() {
     let sent: string | null = null;
     await run("deposit", async () => {
       onStage?.("prepare");
-      const utxos = await walletUtxos(key);
-      const d = await autopilot.deposit(session!, ada, utxos, "ADA");
+      if (!(await sameAccount(key, session!.address)))
+        throw new Error("Your wallet has a different account selected than the one connected to Autopilot. Switch back to that account in your wallet (or connect this one), then try again.");
+      const utxos = await walletUtxos(key, (ada + 3) * 1e6); // the amount plus room for fees and change
+      const d = await autopilot.deposit(session!, ada, utxos, "ADA").catch((e: Error) => {
+        // Strike couldn't put the transaction together from these coins: say what usually causes it.
+        if (/build-tx/.test(e.message))
+          throw new Error(
+            "Strike couldn't build the deposit from your wallet's coins. Usually a recent transaction from this wallet isn't confirmed yet (wait a minute or two), or the amount leaves too little for fees (try a little less). Then try again.",
+          );
+        throw e;
+      });
       onStage?.("sign");
       const hash = await signAndSubmit(key, d.unsignedTx, () => onStage?.("send"));
       rememberWallet(key);

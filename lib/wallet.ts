@@ -4,7 +4,7 @@ type Cip30Api = {
   getUsedAddresses(): Promise<string[]>;
   getChangeAddress(): Promise<string>;
   signData(addr: string, payload: string): Promise<{ signature: string; key: string }>;
-  getUtxos(): Promise<string[] | undefined>;
+  getUtxos(amount?: string): Promise<string[] | null | undefined>;
   getBalance(): Promise<string>;
   signTx(tx: string, partialSign?: boolean): Promise<string>;
   submitTx(tx: string): Promise<string>;
@@ -98,8 +98,49 @@ export async function signText(key: string, text: string) {
 }
 
 /** The wallet's spendable coins (hex CBOR), which Strike needs to build a deposit. */
-export async function walletUtxos(key: string): Promise<string[]> {
-  return (await (await window.cardano![key].enable()).getUtxos()) ?? [];
+/** The wallet's coins (CIP-30 UTxOs, CBOR hex). With `lovelace`, only enough to cover it (wallets that can't
+ *  select fall back to all of them), so a transaction isn't built from coins a pending transaction spends. */
+export async function walletUtxos(key: string, lovelace?: number): Promise<string[]> {
+  const api = await window.cardano![key].enable();
+  if (lovelace) {
+    const some = await api.getUtxos(cborUint(BigInt(Math.ceil(lovelace)))).catch(() => null);
+    if (some?.length) return some;
+  }
+  return (await api.getUtxos()) ?? [];
+}
+
+/** CBOR unsigned integer (a CIP-30 `amount` of lovelace), as hex. */
+export function cborUint(n: bigint): string {
+  const hex = (v: bigint, bytes: number) => v.toString(16).padStart(bytes * 2, "0");
+  if (n < BigInt(24)) return hex(n, 1);
+  if (n < BigInt(256)) return "18" + hex(n, 1);
+  if (n < BigInt(65536)) return "19" + hex(n, 2);
+  if (n < BigInt(4294967296)) return "1a" + hex(n, 4);
+  return "1b" + hex(n, 8);
+}
+
+/** The stake part of a base address (hex), from bech32; undefined for other address types. */
+export function stakeOf(addrBech32: string): string | undefined {
+  const sep = addrBech32.lastIndexOf("1");
+  const data = [...addrBech32.slice(sep + 1, -6)].map((c) => CHARSET.indexOf(c));
+  const out: number[] = [];
+  let acc = 0;
+  let bits = 0;
+  for (const v of data) {
+    acc = (acc << 5) | v;
+    bits += 5;
+    if (bits >= 8) out.push((acc >>> (bits -= 8)) & 255);
+  }
+  if (out.length !== 57) return undefined;
+  return out.slice(29).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Whether the wallet's selected account is the one with this address (same stake key, or the same address). */
+export async function sameAccount(key: string, address: string): Promise<boolean> {
+  const now = await connectAddress(key);
+  const a = stakeOf(now);
+  const b = stakeOf(address);
+  return a && b ? a === b : now === address;
 }
 
 /** Signs a transaction Strike built, adds the signature without re-encoding it, and submits it. Returns the tx hash. */
