@@ -62,6 +62,9 @@ export const MARKETS = [
 
 
 export function ConnectCard({ wallets, busy, disabled, onConnect, onDemo }: { wallets: InstalledWallet[]; busy: boolean; disabled: boolean; onConnect: (key: string) => void; onDemo: () => void }) {
+  // Which wallet the user picked: only that one shows it's waiting for the signature.
+  const [picked, setPicked] = useState<string | null>(null);
+  const connecting = busy ? wallets.find((w) => w.key === picked) : undefined;
   return (
     <section className="card relative overflow-hidden rounded-3xl p-6 sm:p-8" data-tour="connect">
       <div className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-mint/15 blur-[100px]" />
@@ -72,15 +75,35 @@ export function ConnectCard({ wallets, busy, disabled, onConnect, onDemo }: { wa
             One signature opens your account on <span className="text-white">Strike Finance</span> (or links the one you have) through Strike&apos;s builder program. No transaction, no fee.
           </p>
           {wallets.length ? (
-            <div className="mt-6 flex flex-wrap gap-2">
-              {wallets.map((w) => (
-                <button key={w.key} disabled={busy || disabled} onClick={() => onConnect(w.key)} className="flex items-center gap-2.5 rounded-full bg-mint py-2 pr-5 pl-2 font-semibold text-ink transition hover:bg-mint-2 disabled:opacity-50">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={w.icon} alt="" className="size-7 rounded-full bg-white" />
-                  {busy ? "Check your wallet…" : `Connect ${w.name}`}
-                </button>
-              ))}
-            </div>
+            <>
+              <div className="mt-6 flex flex-wrap gap-3">
+                {wallets.map((w) => {
+                  const mine = connecting?.key === w.key;
+                  return (
+                    <button
+                      key={w.key}
+                      disabled={busy || disabled}
+                      onClick={() => {
+                        setPicked(w.key);
+                        onConnect(w.key);
+                      }}
+                      title={w.name}
+                      aria-label={`Connect ${w.name}`}
+                      className={`group relative grid size-16 place-items-center rounded-2xl border bg-white/[0.04] transition ${
+                        mine ? "border-mint/70 bg-mint/[0.08]" : "border-white/10 hover:-translate-y-0.5 hover:border-mint/50 hover:bg-white/[0.07]"
+                      } ${busy && !mine ? "opacity-35" : ""} disabled:cursor-default`}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={w.icon} alt="" className={`size-10 rounded-xl transition ${mine ? "opacity-60" : ""}`} />
+                      {mine && <span className="absolute inset-1.5 animate-spin rounded-xl border-2 border-mint/20 border-t-mint" aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-2.5 h-5 text-xs text-muted" aria-live="polite">
+                {connecting ? <span className="text-mint">Check your {connecting.name} wallet to sign…</span> : "Pick your wallet to connect."}
+              </p>
+            </>
           ) : (
             <p className="mt-6 text-sm text-muted">No Cardano wallet found in this browser. Install Eternl, Lace or Vespr, then come back.</p>
           )}

@@ -28,5 +28,11 @@
     "equity": 747.76,
     "netDeposited": 748.64,
     "pnl": -0.87
+  },
+  {
+    "date": "2026-10-22",
+    "equity": 765.16,
+    "netDeposited": 748.63,
+    "pnl": 16.53
   }
 ]
