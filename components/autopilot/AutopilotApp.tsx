@@ -125,8 +125,9 @@ export function AutopilotApp() {
         try {
           hist = JSON.parse(localStorage.getItem(key) ?? "[]");
         } catch {}
-        const at = m.user.lastSyncAt ?? 0;
-        if (at && (!hist.length || hist[hist.length - 1].at < at)) {
+        // A point at every refresh (30 s): the chart shows within a minute; it moves as fresh numbers arrive from Strike.
+        const at = Date.now();
+        if (!hist.length || at - hist[hist.length - 1].at >= 25_000) {
           hist = [...hist, { at, pnl: Math.round(m.user.copies.reduce((t, c) => t + c.pnl, 0) * 100) / 100, working: m.user.copies.reduce((t, c) => t + c.amount, 0) }].slice(-1_000);
           try {
             localStorage.setItem(key, JSON.stringify(hist));
