@@ -4,7 +4,7 @@
 
 import { MIN_COPY_USD, type CopySpec } from "./autopilot.ts";
 import { logUser, type AutoUser } from "./autopilotStore.ts";
-import type { CopySub, StrikeClient, SubAccount } from "./strike-live.ts";
+import type { CopyPosition, CopySub, StrikeClient, SubAccount } from "./strike-live.ts";
 
 export type UserAction = { type: "stop"; lead: string; id: string; reason: string } | { type: "subscribe"; spec: CopySpec };
 
@@ -48,6 +48,19 @@ function adoptParked(u: AutoUser, subAccts: SubAccount[]) {
 }
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 
+/** The bot's copies for this user and each one's profit the way Strike's screen shows it: realized plus
+ *  open positions at mark (a subscription's own `pnl` lags). Shared by the sync and the live read. */
+export function copiesNow(u: AutoUser, active: CopySub[], rows: CopyPosition[] | null) {
+  const ours = active.filter((s) => Object.values(u.managed).includes(s.subscription_id));
+  return ours.map((s) => {
+    const open = (rows ?? []).filter((r) => !r.own && r.subscription_id === s.subscription_id);
+    const profit = Number(s.realized_pnl ?? 0) + (rows ? open.reduce((t, r) => t + Number(r.pnl ?? 0), 0) : Number(s.pnl ?? 0) - Number(s.realized_pnl ?? 0));
+    // isolated: runs in its own sub-account (first version), so its money isn't in the main balance.
+    const isolated = !!s.account_id && s.account_id !== u.accountId;
+    return { lead: s.lead_account_id, amount: Number(s.copy_amount ?? 0), pnl: profit, isolated, positions: open.map((r) => ({ market: r.market, long: r.side === "long", pnl: Number(r.pnl ?? 0) })) };
+  });
+}
+
 /**
  * One sync for one user. Mutates the user. Never throws: errors land on the user's log.
  * `specs` empty = stop everything (the user switched off, or the daily limit was hit).
@@ -79,13 +92,7 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
       if (!prev || usd >= prev.usd) u.volume[s.subscription_id] = { usd, orders };
     }
     const rows = await client.copyPositions(true).catch(() => null);
-    u.copies = ours.map((s) => {
-      const open = (rows ?? []).filter((r) => !r.own && r.subscription_id === s.subscription_id);
-      const profit = Number(s.realized_pnl ?? 0) + (rows ? open.reduce((t, r) => t + Number(r.pnl ?? 0), 0) : Number(s.pnl ?? 0) - Number(s.realized_pnl ?? 0));
-      // isolated: runs in its own sub-account (first version), so its money isn't in the main balance.
-      const isolated = !!s.account_id && s.account_id !== u.accountId;
-      return { lead: s.lead_account_id, amount: Number(s.copy_amount ?? 0), pnl: profit, isolated, positions: open.map((r) => ({ market: r.market, long: r.side === "long", pnl: Number(r.pnl ?? 0) })) };
-    });
+    u.copies = copiesNow(u, active, rows);
     // Daily loss limit: today's change in the copies' profit, against the budget.
     const pnl = u.copies.reduce((t, c) => t + c.pnl, 0);
     // The dashboard's chart: profit on the running copies at each sync (while the bot runs or holds copies).

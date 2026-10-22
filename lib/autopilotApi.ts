@@ -20,6 +20,7 @@ export type AutoUserView = {
   autopilot?: { rulesText: string; reason: string; at: number } | null; // what Autopilot runs with, when it changed something
   reviewedAt?: number | null; // Autopilot's last check
   history?: { at: number; pnl: number; working: number }[]; // profit on the running copies at each sync
+  liveAt?: number | null; // set when `copies` were just read live from Strike (not the last sync)
 };
 export type AutoMe = {
   user: AutoUserView;
@@ -101,6 +102,8 @@ export const autopilot = {
   me: (s: Session) => call<AutoMe>("me", s),
   rules: (s: Session, rules: AutoRules) => call<{ user: AutoUserView; rulesText: string }>("rules", { ...s, rules }),
   mode: (s: Session, mode: AutoMode) => call<{ user: AutoUserView }>("mode", { ...s, mode }),
+  /** The copies' profit right now, read live from Strike (for the stop confirmation). */
+  live: (s: Session) => call<{ at: number; copies: number; pnl: number; working: number }>("live", s),
   /** This account's share id for its public result card (made once, then reused). */
   share: (s: Session) => call<{ id: string }>("share", s),
   deposit: (s: Session, amount: number, utxos: string[], asset: "ADA" | "sUSDrf" = "ADA") =>

@@ -363,7 +363,8 @@ export function AutopilotApp() {
         const h = (me.user.history?.length ?? 0) >= 2 ? me.user.history! : localHist;
         return h.length >= 2 ? { curve: h.map((p) => p.pnl), startedAt: h[0].at } : {};
       })(),
-      syncedAt: me.user.lastSyncAt ?? null,
+      syncedAt: me.user.liveAt ?? me.user.lastSyncAt ?? null,
+      live: !!me.user.liveAt,
       autopilot:
         me.user.mode === "autopilot"
           ? { reason: me.user.autopilot?.reason ?? null, rulesText: me.user.autopilot?.rulesText ?? null, at: me.user.autopilot?.at ?? null, checkedAt: me.user.reviewedAt ?? null }
@@ -402,6 +403,19 @@ export function AutopilotApp() {
     }
     return null;
   };
+
+  // Before stopping a real bot: the profit right now, live from Strike, so nobody stops on a stale number.
+  async function stopWithLiveCheck() {
+    let now = "";
+    try {
+      const l = await autopilot.live(session!);
+      const pct = l.working > 0 ? ` (${l.pnl >= 0 ? "+" : "−"}${Math.abs((l.pnl / l.working) * 100).toFixed(2)}%)` : "";
+      now = `Your copies are at ${l.pnl >= 0 ? "+" : "−"}$${Math.abs(l.pnl).toFixed(2)}${pct} right now, live from Strike.\n\n`;
+    } catch {
+      now = ""; // couldn't read it: the plain question below still works
+    }
+    if (confirm(`${now}Stop the bot? Its copies close at market price.`)) void setMode("off");
+  }
 
   async function saveRules(rules: AutoRules) {
     if (demoOn) {
@@ -618,6 +632,7 @@ export function AutopilotApp() {
                       v={view}
                       busy={busy === "mode"}
                       onMode={(m) => void setMode(m)}
+                      onStop={!demoOn && session ? () => void stopWithLiveCheck() : undefined}
                       onEdit={() => setEditing(true)}
                       onLeave={leaveDemo}
                       onRestart={() => void runDemo(demo.rules!, demo.mode === "off" ? "on" : demo.mode, "Demo restarted.")}

@@ -19,7 +19,7 @@ import { CUP_MIN_HOLDING, cupStandings, cupToCheck, freshJoinTime, joinCup, join
 import { verifySignData } from "./cose.ts";
 import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, MIN_COPY_USD, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
 import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, newSession, publicUser, saveAutoStore, type AutoUser, type Mode } from "./autopilotStore.ts";
-import { parkedOf, syncUser } from "./autopilotEngine.ts";
+import { copiesNow, parkedOf, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { copilotReply, type ChatTurn } from "./copilot.ts";
 import { aiDecision, applyDecision, autopilotSignals, droppedLeads, effectiveRules, rulesDecision, type TraderStats } from "./autotune.ts";
@@ -707,6 +707,23 @@ function copilotAllowed(ip: string, now: number): string | null {
   return null;
 }
 
+/** Copies read live from Strike for a user who's looking (the dashboard, a stop), cached briefly so a
+ *  refreshing page can't hammer Strike. The engine's own sync (every AUTO.syncMs) is separate. */
+const liveCache = new Map<string, { at: number; copies: ReturnType<typeof copiesNow> }>();
+async function liveCopies(u: AutoUser, client: StrikeClient, now: number, maxAgeMs = 20_000) {
+  const hit = liveCache.get(u.stake);
+  if (hit && now - hit.at < maxAgeMs) return hit;
+  try {
+    const [active, rows] = await Promise.all([client.subscriptions("active", true), client.copyPositions(true).catch(() => null)]);
+    const fresh = { at: now, copies: copiesNow(u, active, rows) };
+    liveCache.set(u.stake, fresh);
+    if (liveCache.size > 2_000) for (const [k, v] of liveCache) if (now - v.at > 60_000) liveCache.delete(k);
+    return fresh;
+  } catch {
+    return null; // Strike didn't answer: the page shows the last sync instead
+  }
+}
+
 /** Sign-ins waiting for the user's wallet signature (5 minutes, like Strike's challenge). */
 const autoPending = new Map<string, { address: string; publicKey: string; privateKeyEnc: string; at: number }>();
 
@@ -825,19 +842,28 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
   if (!checkSession(u, String(body.token ?? ""), now)) return { status: 401, data: { error: "Connect your wallet again." } };
   const client = autoClient(u!);
 
+  if (url.pathname === "/autopilot/live") {
+    // Right before a stop: the copies' profit now (at most a few seconds old), so nobody stops on a stale number.
+    const live = await liveCopies(u!, client, now, 5_000);
+    if (!live) return { status: 502, data: { error: "Strike didn't answer just now." } };
+    return { status: 200, data: { at: live.at, copies: live.copies.length, pnl: live.copies.reduce((t, c) => t + c.pnl, 0), working: live.copies.reduce((t, c) => t + c.amount, 0) } };
+  }
   if (url.pathname === "/autopilot/me") {
-    const [acct, vaults, credit, transfers, parked] = await Promise.all([
+    // While the bot runs (or holds copies) the page gets live numbers from Strike, not the last sync's.
+    const live = u!.mode !== "off" || u!.copies?.length ? liveCopies(u!, client, now) : Promise.resolve(null);
+    const [acct, vaults, credit, transfers, parked, liveNow] = await Promise.all([
       client.account().catch(() => null),
       client.request<{ positions?: { vault_id: string; current_value: string; total_pnl: string }[] }>("GET", "/v2/vault/positions").catch(() => null),
       client.request<CreditAccount>("GET", "/v2/credit/account").catch(() => null),
       recentTransfers(client),
       Promise.all([client.subscriptions("active", true), client.subAccounts()]).then(([a, s]) => parkedOf(u!, s, a)).catch(() => []),
+      live,
     ]);
     const slp = vaults?.data.positions?.find((p) => p.vault_id === SLP_ID);
     return {
       status: 200,
       data: {
-        user: publicUser(u!),
+        user: liveNow ? { ...publicUser(u!), copies: liveNow.copies, liveAt: liveNow.at } : publicUser(u!),
         // equity: main account incl. copies running from it and their open profit; available: free to withdraw or copy.
         balance: acct ? { wallet: n(acct.wallet_balance), available: n(acct.available_balance), equity: n(acct.margin_balance ?? acct.wallet_balance) } : null,
         earn: slp ? { value: n(slp.current_value), pnl: n(slp.total_pnl) } : null,

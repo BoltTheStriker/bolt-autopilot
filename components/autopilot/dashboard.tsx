@@ -35,6 +35,7 @@ export type BotView = {
   /** Autopilot mode: its latest action, the rules it runs with when they differ from the user's, its last check. */
   autopilot?: { reason: string | null; rulesText: string | null; at: number | null; checkedAt: number | null };
   syncedAt?: number | null; // real: when the server last read the copies from Strike
+  live?: boolean; // real: the copies were just read live from Strike
 };
 
 const STRIKE_VAULTS = "https://app.strikefinance.org/vaults";
@@ -65,6 +66,7 @@ export function StatusCard({
   onWithdraw,
   onDeposit,
   onShare,
+  onStop,
 }: {
   v: BotView;
   busy: boolean;
@@ -75,6 +77,7 @@ export function StatusCard({
   onWithdraw?: () => void;
   onDeposit?: () => void;
   onShare?: () => void;
+  onStop?: () => void; // a real bot: check the live profit before asking (else a plain confirmation)
 }) {
   // The demo's profit is its balance against the $1,000 start (no rounding drift between the two).
   const profit = v.demo && v.balance !== null ? v.balance - 1_000 : v.copies.reduce((t, c) => t + c.pnl, 0);
@@ -134,7 +137,7 @@ export function StatusCard({
           ) : (
             <button
               disabled={busy}
-              onClick={() => confirm("Stop the bot? Its copies are closed at market.") && onMode("off")}
+              onClick={() => (onStop ? onStop() : confirm("Stop the bot? Its copies are closed at market.") && onMode("off"))}
               className="rounded-full bg-neg/90 px-5 py-2 text-sm font-semibold text-white transition hover:bg-neg hover:shadow-[0_6px_24px_rgba(244,63,94,0.35)] active:scale-[0.97] disabled:opacity-50"
             >
               {busy ? <Spinning label="Stopping…" /> : "Stop the bot"}
@@ -237,7 +240,7 @@ export function StatusCard({
           {usd(v.parked!)} sits in a copy sub-account from the bot&apos;s first version: {v.mode === "off" ? "start the bot to reuse it, or move it to your main account in Strike's app to withdraw it." : "your next copy reuses it."}
         </p>
       )}
-      {!v.demo && v.syncedAt ? <p className="relative mt-3 font-mono text-[10px] text-white/35">Updated from Strike at {time(v.syncedAt)} · refreshes by itself</p> : null}
+      {!v.demo && v.syncedAt ? <p className="relative mt-3 font-mono text-[10px] text-white/35">{v.live ? "Live from Strike at" : "Updated from Strike at"} {time(v.syncedAt)} · refreshes by itself</p> : null}
       {v.rulesText && (
         <p className="relative mt-4 text-xs text-muted">
           {v.mode === "autopilot" && v.autopilot?.rulesText ? "Your limits: " : ""}
