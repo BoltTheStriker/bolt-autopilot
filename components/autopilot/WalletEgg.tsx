@@ -4,6 +4,7 @@
 // "wallet" anywhere (not in a text field) or clicks the Bolt logo 5 times quickly. The video only loads then.
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { autopilotHref, useOnAutopilotHost } from "@/lib/autopilotHost";
 import { site } from "@/lib/config";
 
 const EVENT = "bolt:wallet-egg";
@@ -26,6 +27,7 @@ export function useEggTaps() {
 
 export function WalletEgg() {
   const [open, setOpen] = useState(false);
+  const onHost = useOnAutopilotHost();
   useEffect(() => {
     let typed = "";
     const onKey = (e: KeyboardEvent) => {
@@ -71,14 +73,17 @@ export function WalletEgg() {
                 <p className="font-display text-2xl font-bold">Coming to a wallet near you.</p>
                 <p className="mt-1 text-sm text-muted">Strike copy trading, one tap from your wallet&apos;s home screen, set up by the AI copilot. A concept; example figures.</p>
               </div>
-              <a
-                href={site.socials.x}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-full bg-mint px-6 py-3 font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]"
-              >
-                Wallet teams: let&apos;s talk →
-              </a>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={autopilotHref("/autopilot/wallet", onHost)}
+                  className="rounded-full bg-mint px-6 py-3 font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]"
+                >
+                  Try it on a phone →
+                </a>
+                <a href={site.socials.x} target="_blank" rel="noreferrer" className="glass rounded-full px-6 py-3 font-semibold transition hover:bg-white/10">
+                  Wallet teams: let&apos;s talk
+                </a>
+              </div>
             </div>
           </motion.div>
         </motion.div>

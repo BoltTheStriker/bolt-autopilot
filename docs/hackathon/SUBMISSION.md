@@ -82,7 +82,7 @@ Non-custodial accounts, a trade-only key, withdrawals only to the user's own wal
 - **Next:** holder access (1M $BOLT) after the launch days; the Bolt fee on Autopilot trades feeding buybacks and burns; deposit any Cardano token (SteelSwap swaps it to ADA, then into Strike; built, in testing); copilot trades with a second opinion (checked against what Strike's top traders hold, the market and the user's limits); alerts on Telegram.
 - **Bolt Vault:** Autopilot's engine as a vault on Strike, its performance fee buying back and burning $BOLT, holders first. With the Strike team.
 - **Social copy trading:** traders post their thesis and analysis; users follow the reasoning, discuss it and copy with conviction. A FOMO-style feed for copy trading.
-- **Inside Cardano wallets:** Autopilot as a "Trade" tab in wallets, with Strike's builder fee shared with the wallet.
+- **Inside Cardano wallets:** Autopilot as a "Trade" tab in wallets, with Strike's builder fee shared with the wallet. **Playable now** as a hidden concept: https://autopilot.boltstriker.io/wallet (or type "wallet" on the landing page): a phone with a wallet whose Trade tab opens a Strike account with one signature and runs Bolt's real picks with practice money.
 - A liquidation check in the rules preview, and a weekly review from the copilot.
 
 *Bolt is a community project built on Strike's public tools; it is not made or endorsed by Strike Finance or RealFi. Copy trading can lose money.*

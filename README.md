@@ -22,6 +22,10 @@
 11. **Share your setup.** A link that starts a friend with your rules (their own budget), with your verified result.
 12. **The $BOLT flywheel: trading $BOLT buys STRIKE.** Half of every $BOLT trading fee buys STRIKE for holders; the other half funds the bot that copy-trades on Strike, and its profits buy back and burn $BOLT. Holding 1M $BOLT unlocks Autopilot and its perks after the open launch days. Bolt Vault and social copy trading are on the roadmap.
 
+### Hidden: Autopilot in your wallet
+
+A playable concept at **https://autopilot.boltstriker.io/wallet** (also behind the landing page's easter egg: type "wallet", or tap the logo 5 times): a phone with a generic Cardano wallet whose new **Trade** tab opens a Strike account with one signature, takes a goal, and runs Bolt's real picks with practice money. Code: `components/autopilot/WalletConcept.tsx`.
+
 ## How it works
 
 ```mermaid
