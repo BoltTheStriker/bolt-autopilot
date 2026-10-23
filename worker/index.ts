@@ -812,6 +812,10 @@ function fewerReason(u: AutoUser): string | null {
 
 /** A trader the user switched away from sits out this long (short, so a small budget doesn't run out of choices). */
 const SWITCH_SKIP_MS = 2 * 3_600_000;
+// Before Oct 23 17:30 UTC, a copy that didn't fit Strike's free balance came back as "400 invalid inputs" and held that
+// trader for 6 hours, one trader every sync, until few were left to pick. The balance is checked first now, so holds set
+// before then are lifted (holds set later run as usual; after 23:30 UTC this matches nothing).
+const SHORT_FUNDS_HOLDS_UNTIL = Date.parse("2026-10-23T17:30:00Z") + 6 * 3_600_000;
 
 /** " At $100 per copy (a $100 budget), 14 traders fit." — the smallest bigger copy that opens up a real choice, or "". */
 function budgetHint(rules: AutoRules): string {
@@ -879,6 +883,7 @@ async function syncAutopilot(only?: AutoUser) {
       if (autoPool.length) {
         // Traders set aside under the old one-day rule come back within half an hour (switching now sets them aside for 2h).
         for (const d of Object.values(u.drops ?? {})) if (d.reason === "you switched away from them" && d.until > Date.now() + SWITCH_SKIP_MS) d.until = Date.now() + 30 * 60_000;
+        for (const [lead, until] of Object.entries(u.cooldown ?? {})) if (until <= SHORT_FUNDS_HOLDS_UNTIL) delete u.cooldown![lead];
         await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
         delete u.repick; // the fresh pick after a rules change is done
         // Fewer copies than the rules ask for: say why, once, instead of quietly giving one trader everything.
