@@ -35,11 +35,11 @@ Strike's copy trading is powerful, but doing it well is hard. Hundreds of trader
 **Growth and $BOLT**
 11. **Share your setup:** a link that starts a friend with your rules (their own budget), with your verified result from a real account. Result cards for X are read from the server, so they can't be faked.
 12. **Earn on Strike:** how much money is in copies, idle and earning, and three ways to earn with live rates: Strike's SLP vault, RealFi's sUSDrf through Borrow & Earn (deposited in one signature from Bolt), and STRIKE staking.
-13. **The $BOLT flywheel, live in public:** trading on Strike through Bolt → the live bot's profits (and, after the beta, a small Bolt fee on Autopilot trades) → $BOLT bought back and burned (8.24M so far) → holders paid in STRIKE (₳8.49K so far) and holder access (1M $BOLT unlocks Autopilot and its perks after the open launch days).
+13. **The $BOLT flywheel: trading $BOLT buys STRIKE.** Every $BOLT trade pays a fee: half buys STRIKE for $BOLT holders (₳8.49K of STRIKE so far, buying pressure on Strike's own token), and half funds the bot that copy-trades on Strike with real money; its profits buy back and burn $BOLT (8.24M so far). Autopilot adds its users' volume on Strike, and after the beta a small Bolt fee on their trades. Holding 1M $BOLT unlocks Autopilot and its perks after the open launch days. Live on the landing and impact pages.
 
 ## Why it matters for Strike
 
-Every Bolt user is a Strike user: new accounts through our builder code, copy-trading volume on Strike's engine, deposits from people who'd never have opened Strike on their own, and RealFi liquidity in Borrow & Earn. Bolt is the layer on top; Strike stays the engine, the custody and the source of truth.
+Every Bolt user is a Strike user: new accounts through our builder code, copy-trading volume on Strike's engine, deposits from people who'd never have opened Strike on their own, and RealFi liquidity in Borrow & Earn. And every $BOLT trade buys STRIKE for holders. Bolt is the layer on top; Strike stays the engine, the custody and the source of truth.
 
 We track it in public at **https://autopilot.boltstriker.io/impact**: accounts opened through Bolt, copy-trading volume, the live bot's real result, the $BOLT flywheel and RealFi liquidity, every number labelled (real trades, live count, on-chain, Strike-wide, paper).
 
@@ -63,6 +63,8 @@ flowchart LR
   S -->|"Borrow & Earn"| R["RealFi sUSDrf → SLP"]
   S -->|"withdraw: only to the\nuser's wallet, with its signature"| U
   B -->|"profits (+ fee after beta)"| F["$BOLT buyback & burn"]
+  T["$BOLT trading fees"] -->|"half"| ST["STRIKE bought for holders"]
+  T -->|"half"| B
 ```
 
 - **Site:** Next.js 16 on Vercel. Wallets via CIP-30; transactions are signed in the wallet and witnesses merged without re-encoding the body.

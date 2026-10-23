@@ -20,7 +20,7 @@
 9. **Nothing fails silently.** Strike's own reasons for any order it couldn't copy appear in the activity feed, a health badge and in-page notices show what the bot just did, and the dashboard shows profit since the account started (deposits excluded).
 10. **Trader window.** Click any trader to name them and see Bolt's numbers, their 30-day profit, open positions, recent trades and how much of their trading a Strike copy can follow.
 11. **Share your setup.** A link that starts a friend with your rules (their own budget), with your verified result.
-12. **The $BOLT flywheel.** Trading through Bolt → the live bot's profits (and, after the beta, a small Bolt fee) → $BOLT bought back and burned → holders paid in STRIKE; holding 1M $BOLT unlocks Autopilot and its perks after the open launch days. Bolt Vault and social copy trading are on the roadmap.
+12. **The $BOLT flywheel: trading $BOLT buys STRIKE.** Half of every $BOLT trading fee buys STRIKE for holders; the other half funds the bot that copy-trades on Strike, and its profits buy back and burn $BOLT. Holding 1M $BOLT unlocks Autopilot and its perks after the open launch days. Bolt Vault and social copy trading are on the roadmap.
 
 ## How it works
 

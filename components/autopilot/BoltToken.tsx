@@ -11,7 +11,7 @@ const BOLT_UNIT = site.token.policyId + site.token.assetNameHex;
 const compact = (v: number) => v.toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 2 });
 const usd = (v: number) => `$${compact(v)}`;
 
-type Coin = { holders?: number; burned?: number; burns?: { at: number; amount: number }[]; fees?: { holders?: number }; copyTrade?: { volume?: number } };
+type Coin = { holders?: number; burned?: number; volumeAda?: number; burns?: { at: number; amount: number }[]; fees?: { total?: number; holders?: number }; copyTrade?: { volume?: number } };
 type Impact = { autopilot?: { volumeUsd?: number } };
 
 function useFlywheelNumbers() {
@@ -27,50 +27,51 @@ function useFlywheelNumbers() {
   return n;
 }
 
-/** The $BOLT flywheel: trading on Strike through Bolt → fees and profits → buy back $BOLT → burn, and holders paid in STRIKE. */
+/** The $BOLT flywheel: trading $BOLT → half the fees buy STRIKE for holders, half fund the bot on Strike → its profits
+ *  buy back and burn $BOLT → and round again. */
 export function Flywheel({ id = "flywheel" }: { id?: string }) {
   const { coin, autopilotVolume } = useFlywheelNumbers();
-  const volume = (coin?.copyTrade?.volume ?? 0) + (autopilotVolume ?? 0);
+  const strikeVolume = (coin?.copyTrade?.volume ?? 0) + (autopilotVolume ?? 0);
   const lastBurn = coin?.burns?.[0];
   const fee = site.boltAccess.feeBps;
   const steps = [
     {
       n: 1,
-      title: "People trade on Strike through Bolt",
-      body: "Autopilot users and the live $BOLT bot copy Strike's best traders. Every trade runs on Strike and counts for Bolt.",
-      stat: coin ? usd(volume) : "—",
-      statLabel: "copy-trading volume through Bolt",
+      title: "People trade $BOLT",
+      body: "Every $BOLT trade pays a fee. Half goes to holders, half to the bot that trades on Strike.",
+      stat: coin?.volumeAda ? `₳${compact(coin.volumeAda)}` : "—",
+      statLabel: coin?.fees?.total ? `$BOLT traded · ₳${compact(coin.fees.total)} in fees` : "$BOLT traded",
       live: true,
     },
     {
       n: 2,
-      title: "Profits and fees come back",
-      body: `The live bot's profits, and${fee ? ` Bolt's ${(fee / 100).toFixed(2)}% fee on Autopilot trades` : " after the beta, a small Bolt fee on Autopilot trades (0% today)"}, go into the buyback.`,
-      stat: fee ? `${(fee / 100).toFixed(2)}%` : "0%",
-      statLabel: fee ? "Bolt fee on Autopilot trades" : "Bolt fee during the beta",
-      live: fee > 0,
+      title: "Half the fees buy STRIKE for holders",
+      body: `Paid out in Strike's own token, so every $BOLT trade is buying pressure on STRIKE. Holding ${compact(site.boltAccess.holderMin)} $BOLT also unlocks Autopilot and its perks.`,
+      stat: coin?.fees?.holders ? `₳${compact(coin.fees.holders)}` : "—",
+      statLabel: `of STRIKE bought for ${coin?.holders ?? "…"} holders`,
+      live: true,
     },
     {
       n: 3,
-      title: "$BOLT is bought back and burned",
-      body: "Bought on the market and sent to the burn address, on-chain and checkable. Less $BOLT, every round.",
-      stat: coin?.burned ? compact(coin.burned) : "—",
-      statLabel: lastBurn ? `$BOLT burned · last on ${new Date(lastBurn.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "$BOLT burned",
+      title: "Half funds the bot on Strike",
+      body: `It copy-trades Strike's best traders with real money, alongside every Autopilot user trading through Bolt${fee ? ` (Bolt's fee on their trades: ${(fee / 100).toFixed(2)}%)` : " (a small Bolt fee on their trades joins after the beta)"}.`,
+      stat: coin ? usd(strikeVolume) : "—",
+      statLabel: "copy-trading volume on Strike through Bolt",
       live: true,
     },
     {
       n: 4,
-      title: "Holders earn and get access",
-      body: `Half of every $BOLT trading fee goes to holders in STRIKE, and holding ${compact(site.boltAccess.holderMin)} $BOLT unlocks Autopilot and its perks.`,
-      stat: coin?.fees?.holders ? `₳${compact(coin.fees.holders)}` : "—",
-      statLabel: `paid to ${coin?.holders ?? "…"} holders in STRIKE`,
+      title: "Profits buy back and burn $BOLT",
+      body: "The bot's profits buy $BOLT on the market and send it to the burn address, on-chain and checkable. Less $BOLT, and round again.",
+      stat: coin?.burned ? compact(coin.burned) : "—",
+      statLabel: lastBurn ? `$BOLT burned · last on ${new Date(lastBurn.at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : "$BOLT burned",
       live: true,
     },
   ];
   return (
     <section id={id} className="mx-auto max-w-6xl scroll-mt-28 px-4 pt-24 sm:px-6">
-      <SectionHeading eyebrow="The $BOLT flywheel" title={<>More trading on Strike, <span className="text-gradient">less $BOLT.</span></>}>
-        Bolt turns copy trading on Strike into $BOLT buybacks and burns. Live numbers; the parts not switched on yet say so.
+      <SectionHeading eyebrow="The $BOLT flywheel" title={<>Trading $BOLT <span className="text-gradient">buys STRIKE.</span></>}>
+        Half of every $BOLT fee buys STRIKE for holders; the other half trades on Strike, and its profits burn $BOLT. Live numbers.
       </SectionHeading>
       <ol className="mt-10 grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         {steps.map((s) => (
@@ -83,7 +84,11 @@ export function Flywheel({ id = "flywheel" }: { id?: string }) {
             <p className="mt-2 flex-1 text-sm leading-relaxed text-soft">{s.body}</p>
             <p className="mt-4 font-display text-3xl font-bold text-mint">{s.stat}</p>
             <p className="text-xs text-muted">{s.statLabel}</p>
-            {s.n < 4 && <span className="absolute top-1/2 -right-2.5 hidden size-5 -translate-y-1/2 place-items-center rounded-full bg-ink text-mint lg:grid">→</span>}
+            {s.n < 4 ? (
+              <span className="absolute top-1/2 -right-2.5 hidden size-5 -translate-y-1/2 place-items-center rounded-full bg-ink text-mint lg:grid">→</span>
+            ) : (
+              <span className="absolute -bottom-2.5 left-1/2 hidden -translate-x-1/2 rounded-full bg-ink px-2 font-mono text-[10px] text-mint lg:block">↺ round again</span>
+            )}
           </li>
         ))}
       </ol>
@@ -189,7 +194,7 @@ const ROADMAP: { stage: string; tone: string; items: Item[] }[] = [
       { title: "Targets, pauses and schedules", body: "Stop at +$X or −$X, a daily profit target, pause until Monday, weekdays only." },
       { title: "Trader window and smarter picks", body: "Name and study each trader; picks favour active traders already in a trade, spread over different bets." },
       { title: "Share your setup", body: "A link that starts a friend with your rules, with your verified result." },
-      { title: "$BOLT burns from the live bot", body: "The live bot's profits buy back and burn $BOLT." },
+      { title: "The $BOLT flywheel", body: "Half of every $BOLT fee buys STRIKE for holders; the other half trades on Strike, and its profits burn $BOLT." },
     ],
   },
   {
