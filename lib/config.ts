@@ -62,7 +62,7 @@ export const site = {
   /** "Deposit any Cardano token" (SteelSwap swaps it to ADA, then a normal deposit). true shows the "Other token" tab
    *  in the deposit window to everyone; "admin" only to a verified admin (for a real-wallet test on the live site).
    *  The server side is live already (STEELSWAP_API_KEY on the worker). */
-  tokenDeposits: "admin" as boolean | "admin",
+  tokenDeposits: true as boolean | "admin", // live for everyone since Oct 23 (tested with a real wallet)
   /** $BOLT inside Autopilot. holderOnly false = the open launch days (everyone can use Autopilot); true = wallets holding
    *  at least holderMin $BOLT. feeBps: Bolt's fee on Autopilot trades (0 during the beta); when on, it buys back and burns. */
   boltAccess: { holderMin: 1_000_000, holderOnly: false, feeBps: 0 },
