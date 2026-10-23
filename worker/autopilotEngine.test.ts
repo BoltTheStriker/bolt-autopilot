@@ -233,3 +233,18 @@ test("less free balance than the rules ask for: the last copy uses what's free, 
   await syncUser(u, client, [big("0xa"), big("0xb"), big("0xc")], T + 240_000);
   assert.ok(u.managed["0xc"]);
 });
+
+test("a copy Strike ends at a loss (its stop-loss) sets that trader aside for a day; one ended in profit doesn't", async () => {
+  const { client, active, pnl } = fakeStrike();
+  const u = user();
+  await syncUser(u, client, [spec("0xa"), spec("0xb")], T);
+  pnl["sub-0xa"] = -7.6; // at its stop
+  pnl["sub-0xb"] = 3.2;
+  await syncUser(u, client, [spec("0xa"), spec("0xb")], T + 60_000);
+  for (const s of active) s.status = "stopped"; // Strike ended both: 0xa at its stop-loss, 0xb by hand in Strike's app
+  await syncUser(u, client, [], T + 120_000);
+  assert.deepEqual(Object.keys(u.drops ?? {}), ["0xa"]);
+  assert.equal(u.drops!["0xa"].until, T + 120_000 + 24 * 3_600_000);
+  assert.ok(u.log.some((l) => /0xa…0xa ended on Strike at −\$7\.60 \(its stop-loss\)\. That trader sits out for a day/.test(l.text)));
+  assert.ok(u.log.some((l) => /0xb…0xb ended on Strike \(stopped in Strike's app\)/.test(l.text)));
+});

@@ -25,6 +25,9 @@ export function planUser(managed: Record<string, string>, specs: CopySpec[], act
 
 const today = (now: number) => new Date(now).toISOString().slice(0, 10);
 const COOLDOWN_MS = 6 * 3_600_000;
+/** A trader whose copy Strike ended at a loss (the copy's stop-loss) sits out this long, so the bot doesn't walk straight
+ *  back into the same losing positions. Like Autopilot's drops, they come back by themselves if still ranked. */
+export const STOP_HOLD_MS = 24 * 3_600_000;
 
 /** Money sitting in this user's copy sub-accounts with no copy running there (Strike leaves it
  *  behind when a copy ends). */
@@ -123,9 +126,14 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
     // Copies Strike already ended (stop-loss hit, stopped in the Strike app).
     for (const [lead, id] of Object.entries(u.managed)) {
       if (!active.some((s) => s.subscription_id === id)) {
-        if (u.run) u.run.closed += lastPnl(lead); // its last known result, from the previous sync
+        const last = lastPnl(lead);
+        if (u.run) u.run.closed += last; // its last known result, from the previous sync
         delete u.managed[lead];
-        logUser(u, now, `Copy of ${short(lead)} ended on Strike (stop-loss or stopped in the app).`);
+        if (last < 0) {
+          // Ended at a loss: the copy's stop-loss (a copy stopped by hand in Strike's app is set aside too, which is fine).
+          u.drops = { ...(u.drops ?? {}), [lc(lead)]: { until: now + STOP_HOLD_MS, reason: "its copy hit your stop-loss" } };
+          logUser(u, now, `Copy of ${short(lead)} ended on Strike at −$${(-last).toFixed(2)} (its stop-loss). That trader sits out for a day; the bot picks the next best fit.`);
+        } else logUser(u, now, `Copy of ${short(lead)} ended on Strike (stopped in Strike's app).`);
       }
     }
     // Each copy's profit the way Strike's screen shows it: realized + open positions at mark

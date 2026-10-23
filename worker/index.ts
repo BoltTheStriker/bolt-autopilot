@@ -805,7 +805,7 @@ function fewerReason(u: AutoUser): string | null {
   const many = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
   return (
     `Copying ${many(got, "trader")} instead of ${rules.traders}: at $${per.toFixed(0)} per copy only ${many(fit.length - aside, "ranked trader")} ${fit.length - aside === 1 ? "fits" : "fit"} right now` +
-    (aside ? ` (${aside} more ${aside === 1 ? "is" : "are"} set aside after you switched; back within 2 hours)` : "") +
+    (aside ? ` (${aside} more ${aside === 1 ? "is" : "are"} set aside for now: a switch, a stop-loss or Autopilot; back by themselves)` : "") +
     `. ${got === 1 ? "It gets" : "They get"} the whole $${(rules.budgetUsd * RISK_LEVELS[rules.risk].deploy).toFixed(0)}.${budgetHint(rules)}`
   );
 }
@@ -859,7 +859,7 @@ function idleReason(u: AutoUser): string | null {
     const per = perCopyUsd(rules);
     const fit = fitting(autoPool, rules).length;
     if (fit > 0)
-      return `You've set aside every trader a $${per.toFixed(0)} copy can follow well today (${fit} of ${autoPool.length}). They're back within a day.${budgetHint(rules)}`;
+      return `Every trader a $${per.toFixed(0)} copy can follow well (${fit} of ${autoPool.length}) is set aside for now: after a switch, a stop-loss or a refused copy. They come back by themselves within a day.${budgetHint(rules)}`;
     if (per < 500) return `At $${per.toFixed(0)} per copy, none of the ${autoPool.length} ranked traders can be followed well: copies that small skip most of their trades.${budgetHint(rules)}`;
     return `No ranked trader fits your rules right now (${autoPool.length} ranked). The bot checks again every few minutes; "Everything" for markets or fewer traders gives it more to pick from.`;
   }
