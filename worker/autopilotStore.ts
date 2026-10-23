@@ -8,7 +8,7 @@
 import { createCipheriv, createDecipheriv, createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { describeRules, type AutoRules } from "./autopilot.ts";
-import type { Drops, Tuned } from "./autotune.ts";
+import type { DecisionRecord, Drops, Tuned } from "./autotune.ts";
 
 export type Mode = "off" | "on" | "autopilot"; // on = runs the user's rules; autopilot = the copilot may also adjust them within limits
 export type AutoUser = {
@@ -39,6 +39,8 @@ export type AutoUser = {
   drops?: Drops;
   reviewedAt?: number;
   reviews?: { day: string; n: number };
+  decisions?: DecisionRecord[]; // Autopilot's reviews, newest first
+  run?: { since: number; closed: number }; // since Start: when, and the profit of copies that already ended
   /** Profit on the running copies at each sync (for the dashboard's chart), newest last, at most 1,000. */
   history?: { at: number; pnl: number; working: number }[];
   lastSyncAt?: number;
@@ -121,5 +123,5 @@ export function publicUser(u: AutoUser) {
   return { address: u.address, accountId: u.accountId, network: u.network, createdAt: u.createdAt, rules: u.rules, mode: u.mode, copies: u.copies ?? [], log: u.log.slice(0, 40), lastSyncAt: u.lastSyncAt, lastError: u.lastError, idle: u.idle ?? null,
     // What Autopilot runs with right now, when it changed something (always inside the user's rules).
     autopilot: u.tuned ? { rulesText: describeRules(u.tuned.rules), reason: u.tuned.reason, at: u.tuned.at } : null, reviewedAt: u.reviewedAt ?? null,
-    history: thin(u.history ?? [], 300) };
+    history: thin(u.history ?? [], 300), decisions: (u.decisions ?? []).slice(0, 10), run: u.run ?? null };
 }

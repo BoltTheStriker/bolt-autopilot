@@ -16,12 +16,17 @@ export type CopilotContext = {
   maxBudgetUsd: number;
   balance: number | null;
   copies: { lead: string; amount: number; pnl: number }[];
+  mode?: "off" | "on" | "autopilot" | null; // the bot right now
+  sinceStart?: number | null; // profit since the user pressed Start (copies that ended included)
+  today?: number | null; // profit today (UTC)
 };
+/** What the user can do in one tap from a copilot message (the app asks nothing more). */
+export type CopilotAction = "start" | "stop" | "autopilot" | "follow_rules";
 export type CopilotData = {
   traders: () => unknown; // the bot's ranked traders, as the demo sees them
   earn: () => Promise<unknown>; // SLP vault numbers
 };
-export type CopilotReply = { reply: string; proposal: AutoRules | null; proposalText: string | null };
+export type CopilotReply = { reply: string; proposal: AutoRules | null; proposalText: string | null; action?: CopilotAction | null };
 
 const levels = Object.entries(RISK_LEVELS)
   .map(([k, v]) => `${k}: ${Math.round(v.deploy * 100)}% of the budget working, leverage cap up to ${v.maxLeverage}x, stop-loss per copy up to −${Math.round(v.stopLossPct * 100)}%, daily loss limit up to −${Math.round(v.dailyLossPct * 100)}%, ${v.multiplier}× sizing`)
@@ -35,7 +40,17 @@ How Autopilot works:
 - Risk levels set the ceilings for the limits:
 ${levels}
 - Each copy runs from the user's own Strike account, with its stop-loss and leverage cap set on Strike. If the whole bot loses its daily limit in a day, copying pauses until the next day. Profit lock (optional) banks a copy's gain at a set percentage and then copies that trader again.
+- Stop targets (optional, in dollars, for the whole bot since the user pressed Start): "stop at profit" stops every copy and switches the bot off once the total profit reaches the amount ("when I'm up $20, stop"); "stop at loss" does the same once the total loss reaches the amount ("if I lose $30 in total, stop everything"). Copies that already ended count toward the total. The server checks about every 2 minutes and stopping closes copies at market, so the final result can land a little above or below the target. The bot stays off until the user starts it again. Autopilot never changes these targets.
+- More things the user can ask for, all rules (shown with Apply like any proposal):
+  - boost: copy size against the trader's, 1x to 3x (low risk allows 1x, medium up to 2x, high up to 3x). 2x means the copy trades twice the trader's size relative to its money: gains and losses both double, and the stop-loss still caps each copy. This is different from the leverage cap (maxLeverage), which limits the leverage of each copied trade. null keeps the risk level's default.
+  - dailyProfitUsd: "when I make $10 a day, stop for the day": once today's profit reaches it, every copy closes and copying picks up again tomorrow (UTC).
+  - pauseUntil: "pause until Monday", "pause for 6 hours": an ISO 8601 UTC time (work it out from "Now" in the app state). Copies close now and the bot picks up again by itself at that time. null = not paused (use it to resume early).
+  - weekdaysOnly: "don't trade on weekends": copies close for Saturday and Sunday (UTC) and the bot picks up again on Monday.
+  - avoid: traders never to copy ("never copy that one again"), as their addresses exactly as the app state shows them. The bot stops any copy of them and picks someone else. Keep the ones already in the list unless the user asks to remove them.
+- Actions (call propose_action; the app shows one button, nothing happens until the user taps it): "stop the bot" / "close everything" → stop (every copy closes at market); "start" / "turn it back on" → start; "switch to Autopilot" → autopilot; "back to my own rules" → follow_rules. Use these for switching, not propose_rules.
+- "How am I doing?": answer from the app state (profit since Start, today, each copy's profit, the best and the worst), in plain numbers. Never guess numbers that aren't there.
 - Two ways to run: "Follow my rules" (the bot copies its best picks for the rules and keeps them while they stay in its ranking) or "Autopilot" (Bolt's AI also looks after the setup: it can stop copying a trader who left the ranking or is failing with a poor week, step risk down after losses near the daily limit, and step back to the user's own settings on a calm day). Autopilot never goes beyond the user's own settings (risk, budget, leverage, stop-loss, daily limit, markets) and never touches withdrawals; every change it makes appears in the activity feed with the reason. Switching back to "Follow my rules" undoes its changes.
+- Rule changes apply to new copies. A copy that's already running keeps the settings it started with (its size, boost, stop-loss and leverage) until the bot replaces it, or the user stops and starts the bot. When someone changes those while copies are running, say so in one sentence and that stopping and starting applies it now. Targets, pauses, the schedule and blocked traders apply right away.
 - Money stays in the user's own Strike account. The bot's key can trade but never withdraw.
 - Earn: money the bot isn't using can sit in Strike's SLP vault (Strike's market-making vault; APR is variable and SLP can lose money). Strike's Borrow & Earn accepts RealFi's sUSDrf (a yield-bearing dollar) as collateral and puts the credit into SLP, so the same dollars earn sUSDrf's yield plus SLP's returns. sUSDrf takes losses first if RealFi's loans go bad, and moving USDrf into sUSDrf has a 7-day cooldown. With Borrow & Earn the debt is in USD and Strike can redeem SLP shares or convert collateral if the line becomes unhealthy. Vault deposits happen on Strike's own site.
 - Bolt is a community project built on Strike's public tools; it is not made or endorsed by Strike or RealFi.
@@ -52,9 +67,12 @@ Getting started and your money (answer these plainly):
 
 How to help:
 - When the user wants a change, or describes a goal you can turn into rules, call propose_rules with the complete rule set. The app shows your proposal with an Apply button; nothing changes until the user taps it. Say what you proposed in a sentence or two; don't claim it's already applied.
+- Keep everything the user didn't ask to change as it is in their current rules. Only if your proposal changes anything else, or the tool result shows a value was clamped (for example to the risk level's ceiling), say so in one short sentence.
+- Talk like a person, not a form: react to what they said in their words (for example "Got it: once you're $20 up, the bot stops and banks it"), then the proposal.
 - Use get_traders when the user asks about the traders or why the bot picked them, and get_earn for Earn questions. Quote numbers from the tools, never invent them.
 - Be honest about risk: copy trading can lose money, limits cut losses but can't prevent them, and past results don't promise future ones. Never promise or predict returns.
-- Keep replies short (under about 120 words), friendly and concrete. Plain text: no markdown headings or tables; a short dash list is fine.
+- Keep replies short: 2 to 4 sentences, under about 70 words. Say what you proposed or the answer first, then at most one caveat that matters. Don't repeat rules that didn't change, don't list every copy unless asked, and don't restate numbers the user can already see unless they explain the point.
+- Plain text only: no markdown, no bold or asterisks, no headings. Use a short dash list only when the user asked for several items (like "how am I doing").
 - If someone asks for something outside Autopilot, Earn or how they work, say briefly what you can help with.`;
 
 const TOOLS: Anthropic.Beta.BetaTool[] = [
@@ -75,8 +93,26 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
         stopLossPct: { type: "number", description: "Stop each copy at this loss, as a fraction (0.1 = −10%)" },
         dailyLossPct: { type: "number", description: "Pause for the day at this total loss, as a fraction" },
         profitLockPct: { type: ["number", "null"], description: "Bank a copy's gain at this fraction (0.15 = +15%), or null for no profit lock" },
+        boost: { type: ["integer", "null"], description: "Copy size against the trader's, 1-3 (capped by risk level), or null for the risk level's default" },
+        dailyProfitUsd: { type: ["number", "null"], description: "Stop for the day once today's profit reaches this many dollars, or null for none" },
+        pauseUntil: { type: ["string", "null"], description: "Pause copying until this ISO 8601 UTC time, or null for not paused" },
+        weekdaysOnly: { type: "boolean", description: "No copies on Saturdays and Sundays (UTC)" },
+        avoid: { type: "array", items: { type: "string" }, description: "Trader addresses never to copy, as the app shows them" },
+        stopAtProfitUsd: { type: ["number", "null"], description: "Stop the whole bot once its total profit since Start reaches this many dollars, or null for none" },
+        stopAtLossUsd: { type: ["number", "null"], description: "Stop the whole bot once its total loss since Start reaches this many dollars, or null for none" },
       },
-      required: ["risk", "goal", "markets", "traders", "budgetUsd", "maxLeverage", "stopLossPct", "dailyLossPct", "profitLockPct"],
+      required: ["risk", "goal", "markets", "traders", "budgetUsd", "maxLeverage", "stopLossPct", "dailyLossPct", "profitLockPct", "stopAtProfitUsd", "stopAtLossUsd", "boost", "dailyProfitUsd", "pauseUntil", "weekdaysOnly", "avoid"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "propose_action",
+    description: "Offer the user a one-tap action on their bot: start it, stop it (every copy closes at market), switch to Autopilot, or back to following their own rules. Shown as a button; nothing happens until they tap it.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { action: { type: "string", enum: ["start", "stop", "autopilot", "follow_rules"] } },
+      required: ["action"],
       additionalProperties: false,
     },
   },
@@ -94,14 +130,21 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   },
 ];
 
+const money = (v: number) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
+
 function contextNote(c: CopilotContext): string {
   const lines = [
+    `Now: ${new Date().toISOString()}.`,
     `Mode: ${c.demo ? "demo ($1,000 of pretend money)" : "real Strike account"}. Budget limit: $${c.maxBudgetUsd}.`,
+    c.mode ? `The bot is ${c.mode === "off" ? "off" : c.mode === "autopilot" ? "running in Autopilot" : "running, following the user's rules"}.` : "",
+    c.sinceStart !== null && c.sinceStart !== undefined ? `Profit since Start: ${money(c.sinceStart)}.` : "",
+    c.today !== null && c.today !== undefined ? `Profit today: ${money(c.today)}.` : "",
     c.rules ? `Current rules: ${describeRules(c.rules)}.` : "No rules set yet.",
+    c.rules?.avoid?.length ? `Blocked traders (keep them in avoid): ${c.rules.avoid.join(", ")}.` : "",
   ];
   if (c.balance !== null) lines.push(`Balance: $${c.balance.toFixed(2)}.`);
-  if (c.copies.length) lines.push(`Copies: ${c.copies.map((x) => `${x.lead} $${x.amount.toFixed(0)} (${x.pnl >= 0 ? "+" : "−"}$${Math.abs(x.pnl).toFixed(2)})`).join(", ")}.`);
-  return lines.join(" ");
+  if (c.copies.length) lines.push(`Copies: ${c.copies.map((x) => `${x.lead} $${x.amount.toFixed(0)} (${money(x.pnl)})`).join(", ")}.`);
+  return lines.filter(Boolean).join(" ");
 }
 
 /** One copilot reply: runs Claude with the tools until it answers (bounded). */
@@ -120,6 +163,7 @@ export async function copilotReply(client: Anthropic, history: ChatTurn[], ctx: 
   ];
 
   let proposal: AutoRules | null = null;
+  let action: CopilotAction | null = null;
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await client.beta.messages.create({
       model: COPILOT_MODEL,
@@ -132,7 +176,7 @@ export async function copilotReply(client: Anthropic, history: ChatTurn[], ctx: 
       tools: TOOLS,
       messages,
     });
-    if (res.stop_reason === "refusal") return { reply: "Sorry, I can't help with that one. Ask me about your rules, the traders, or Earn.", proposal: null, proposalText: null };
+    if (res.stop_reason === "refusal") return { reply: "Sorry, I can't help with that one. Ask me about your rules, the traders, or Earn.", proposal: null, proposalText: null, action: null };
 
     const text = res.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
@@ -141,7 +185,8 @@ export async function copilotReply(client: Anthropic, history: ChatTurn[], ctx: 
       .trim();
     const calls = res.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
     if (res.stop_reason !== "tool_use" || !calls.length) {
-      return { reply: text || "Done.", proposal, proposalText: proposal ? describeRules(proposal) : null };
+      // Plain text in the chat bubble: drop any markdown emphasis the model still adds.
+      return { reply: (text || "Done.").replace(/\*\*(.+?)\*\*/g, "$1").replace(/(^|\s)\*(\S.*?\S)\*(?=\s|[.,!?]|$)/g, "$1$2"), proposal, proposalText: proposal ? describeRules(proposal) : null, action };
     }
 
     // Append the turn unchanged (thinking blocks included), then all tool results in one message.
@@ -153,7 +198,18 @@ export async function copilotReply(client: Anthropic, history: ChatTurn[], ctx: 
           const next = sanitizeRules(call.input, ctx.maxBudgetUsd);
           if (!next) throw new Error("Those rules aren't valid. Check the values and try again.");
           proposal = next;
-          results.push({ type: "tool_result", tool_use_id: call.id, content: `Proposed to the user (not applied until they tap Apply): ${describeRules(next)}.` });
+          // Values the checks changed (a risk level's ceiling, the budget limit), so the reply can say so.
+          const asked = call.input as Record<string, unknown>;
+          const clamped = (["budgetUsd", "traders", "maxLeverage", "stopLossPct", "dailyLossPct", "stopAtLossUsd", "boost"] as const)
+            .filter((k) => asked[k] !== null && asked[k] !== undefined && Number(asked[k]) !== next[k])
+            .map((k) => `${k} ${String(asked[k])} → ${String(next[k])}`);
+          const note = clamped.length ? ` Clamped to the limits: ${clamped.join(", ")}.` : "";
+          results.push({ type: "tool_result", tool_use_id: call.id, content: `Proposed to the user (not applied until they tap Apply): ${describeRules(next)}.${note}` });
+        } else if (call.name === "propose_action") {
+          const a = (call.input as { action?: string }).action;
+          if (a !== "start" && a !== "stop" && a !== "autopilot" && a !== "follow_rules") throw new Error("Unknown action.");
+          action = a;
+          results.push({ type: "tool_result", tool_use_id: call.id, content: `Shown to the user as a button (nothing happens until they tap it): ${a}.` });
         } else if (call.name === "get_traders") {
           results.push({ type: "tool_result", tool_use_id: call.id, content: JSON.stringify(data.traders()) });
         } else if (call.name === "get_earn") {
@@ -167,5 +223,5 @@ export async function copilotReply(client: Anthropic, history: ChatTurn[], ctx: 
     }
     messages.push({ role: "user", content: results });
   }
-  return { reply: "I need a moment on that one. Could you ask again in fewer words?", proposal, proposalText: proposal ? describeRules(proposal) : null };
+  return { reply: "I need a moment on that one. Could you ask again in fewer words?", proposal, proposalText: proposal ? describeRules(proposal) : null, action };
 }

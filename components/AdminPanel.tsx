@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { site } from "@/lib/config";
+import { askConfirm, ConfirmHost } from "./Confirm";
 
 type Status = {
   mode: "paper" | "dry" | "live";
@@ -68,8 +69,8 @@ export function AdminPanel() {
     [key],
   );
 
-  const setMode = (mode: Status["mode"]) => {
-    if (mode === "live" && !confirm(`Go LIVE with real money?\n\nBudget: $${status?.budgetUsd}. Each copy gets a ${15}% Strike-side stop-loss.`)) return;
+  const setMode = async (mode: Status["mode"]) => {
+    if (mode === "live" && !(await askConfirm({ title: "Go live with real money?", body: `Budget $${status?.budgetUsd}. Each copy gets a 15% stop-loss on Strike.`, confirmLabel: "Go live", danger: true }))) return;
     call({ action: "mode", mode });
   };
 
@@ -112,7 +113,7 @@ export function AdminPanel() {
           ))}
         </div>
         {!status.keysConfigured && <p className="mt-3 text-sm text-gold">Strike API keys are not set on Railway yet, so only Paper is available.</p>}
-        <button disabled={busy || status.copies === 0 && status.mode === "paper"} onClick={() => confirm("Stop every copy the bot opened and go back to Paper?") && call({ action: "kill" })}
+        <button disabled={busy || status.copies === 0 && status.mode === "paper"} onClick={() => void askConfirm({ title: "Stop every bot copy?", body: "Every copy the bot opened closes, and the bot goes back to Paper.", confirmLabel: "Stop all copies", danger: true }).then((ok) => void (ok && call({ action: "kill" })))}
           className="mt-4 w-full rounded-2xl bg-neg/90 py-3 font-semibold text-white transition hover:bg-neg disabled:opacity-40">
           Kill switch: stop all bot copies
         </button>
@@ -132,9 +133,9 @@ export function AdminPanel() {
             role="switch"
             aria-checked={!!status.bold?.enabled}
             disabled={busy}
-            onClick={() => {
+            onClick={async () => {
               const on = !status.bold?.enabled;
-              if (on && !confirm("Turn on the bold slot? One real copy will go to a riskier trader (10% stop-loss).")) return;
+              if (on && !(await askConfirm({ title: "Turn on the bold slot?", body: "One real copy goes to a riskier trader, with a 10% stop-loss.", confirmLabel: "Turn on" }))) return;
               call({ action: "bold", enabled: on });
             }}
             className={`relative h-8 w-14 shrink-0 rounded-full transition disabled:opacity-50 ${status.bold?.enabled ? "bg-gold" : "bg-white/15"}`}
@@ -159,9 +160,9 @@ export function AdminPanel() {
             role="switch"
             aria-checked={!!status.lock?.enabled}
             disabled={busy}
-            onClick={() => {
+            onClick={async () => {
               const on = !status.lock?.enabled;
-              if (on && !confirm(`Turn on the profit lock? The bold copy will be closed at +${Math.round((status.lock?.pct ?? 0.15) * 100)}% (banking the profit) and copied again.`)) return;
+              if (on && !(await askConfirm({ title: "Turn on the profit lock?", body: `The bold copy closes at +${Math.round((status.lock?.pct ?? 0.15) * 100)}% to bank the profit, then copies the trader again.`, confirmLabel: "Turn on" }))) return;
               call({ action: "lock", enabled: on });
             }}
             className={`relative h-8 w-14 shrink-0 rounded-full transition disabled:opacity-50 ${status.lock?.enabled ? "bg-mint" : "bg-white/15"}`}
@@ -184,9 +185,9 @@ export function AdminPanel() {
             role="switch"
             aria-checked={!!status.demo?.enabled}
             disabled={busy}
-            onClick={() => {
+            onClick={async () => {
               const on = !status.demo?.enabled;
-              if (on && !confirm("Open the holder demo to the public?")) return;
+              if (on && !(await askConfirm({ title: "Open the holder demo to the public?", confirmLabel: "Open it" }))) return;
               call({ action: "demo", enabled: on });
             }}
             className={`relative h-8 w-14 shrink-0 rounded-full transition disabled:opacity-50 ${status.demo?.enabled ? "bg-mint" : "bg-white/15"}`}
@@ -226,6 +227,7 @@ export function AdminPanel() {
         </ul>
       </div>
       {error && <p className="text-sm text-neg">{error}</p>}
+      <ConfirmHost />
     </div>
   );
 }

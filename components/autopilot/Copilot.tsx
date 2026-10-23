@@ -5,7 +5,7 @@
 // before it's applied.
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { autopilot, type CopilotContext } from "@/lib/autopilotApi";
+import { autopilot, type CopilotAction, type CopilotContext } from "@/lib/autopilotApi";
 import { describeRules, RISK_LEVELS, sanitizeRules, type AutoRules, type Risk } from "@/worker/autopilot";
 import { I } from "./steps";
 
@@ -23,7 +23,19 @@ const TWEAKS: Tweak[] = [
   { id: "lock", label: "Lock in profits", apply: (r) => ({ ...r, profitLockPct: 0.15 }), says: "Bank a copy's gains at +15%, then copy that trader again fresh." },
 ];
 
-type Msg = { me?: boolean; text: string; pending?: AutoRules };
+type Msg = { me?: boolean; text: string; pending?: AutoRules; action?: CopilotAction };
+
+const ASK = "bolt:copilot-ask";
+/** "Help me choose": point the user at the copilot (the docked panel focuses its input; the phone sheet opens separately). */
+export const askCopilot = () => window.dispatchEvent(new Event(ASK));
+const ASK_HINT = "Tell me what you want in your own words, for example \"steady growth, stop if I'm down $30\". Or pick a quick tweak below.";
+
+const ACTIONS: Record<CopilotAction, { label: string; done: string; danger?: boolean }> = {
+  start: { label: "Start the bot", done: "Starting your bot now." },
+  stop: { label: "Stop the bot", done: "Stopping: every copy closes at market.", danger: true },
+  autopilot: { label: "Switch to Autopilot", done: "Autopilot is on. It looks after your setup inside your limits." },
+  follow_rules: { label: "Follow my rules", done: "Back to your own rules exactly." },
+};
 
 export function CopilotPanel({
   rules,
@@ -31,6 +43,7 @@ export function CopilotPanel({
   chat,
   context,
   onApply,
+  onAction,
   onClose,
 }: {
   rules: AutoRules | null;
@@ -38,6 +51,7 @@ export function CopilotPanel({
   chat: boolean; // the AI chat is switched on (server has a Claude key)
   context: CopilotContext;
   onApply: (r: AutoRules) => void;
+  onAction?: (a: CopilotAction) => void;
   onClose?: () => void;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([
@@ -45,7 +59,20 @@ export function CopilotPanel({
   ]);
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
-  const say = (m: Msg[]) => setMsgs((x) => [...x.map((y) => ({ ...y, pending: undefined })), ...m]);
+  const say = (m: Msg[]) => setMsgs((x) => [...x.map((y) => ({ ...y, pending: undefined, action: undefined })), ...m]);
+  // "Help me choose": focus the input, light up the panel, and say what to type.
+  const input = useRef<HTMLInputElement>(null);
+  const [lit, setLit] = useState(false);
+  useEffect(() => {
+    const onAsk = () => {
+      input.current?.focus();
+      setLit(true);
+      setTimeout(() => setLit(false), 1200);
+      setMsgs((x) => (x.at(-1)?.text === ASK_HINT ? x : [...x, { text: ASK_HINT }]));
+    };
+    window.addEventListener(ASK, onAsk);
+    return () => window.removeEventListener(ASK, onAsk);
+  }, []);
   // Keep the newest message in view.
   const list = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -64,7 +91,7 @@ export function CopilotPanel({
         history.map((m) => ({ role: m.me ? ("user" as const) : ("assistant" as const), text: m.text })),
         context,
       );
-      say([{ text: r.reply, pending: r.proposal ?? undefined }]);
+      say([{ text: r.reply, pending: r.proposal ?? undefined, action: (onAction && r.action) || undefined }]);
     } catch (e) {
       say([{ text: e instanceof Error ? e.message : "The copilot couldn't answer that. Try again." }]);
     } finally {
@@ -84,7 +111,7 @@ export function CopilotPanel({
   }
 
   return (
-    <div className="card flex h-full flex-col overflow-hidden rounded-3xl border border-mint/20" data-tour="copilot">
+    <div className={`card flex h-full flex-col overflow-hidden rounded-3xl border transition-[border-color,box-shadow] duration-500 ${lit ? "border-mint/70 shadow-[0_0_40px_rgba(78,250,176,0.25)]" : "border-mint/20"}`} data-tour="copilot">
       <div className="flex items-center gap-2.5 border-b border-white/10 px-5 py-4">
         <span className="grid size-8 place-items-center rounded-full bg-mint text-ink">{I.spark}</span>
         <div>
@@ -104,12 +131,30 @@ export function CopilotPanel({
             <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex ${m.me ? "justify-end" : ""}`}>
               <div className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line ${m.me ? "rounded-br-md bg-mint text-ink" : "rounded-bl-md bg-white/[0.06] text-soft"}`}>
                 {m.text}
+                {m.action && onAction && (
+                  <div className="mt-2.5 flex gap-2">
+                    <button
+                      onClick={() => {
+                        onAction(m.action!);
+                        say([{ text: ACTIONS[m.action!].done }]);
+                      }}
+                      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition active:scale-[0.97] ${ACTIONS[m.action].danger ? "bg-neg/90 text-white hover:bg-neg" : "bg-mint text-ink hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)]"}`}
+                    >
+                      {ACTIONS[m.action].label}
+                    </button>
+                    <button onClick={() => say([{ text: "OK, nothing changed." }])} className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs">
+                      Not now
+                    </button>
+                  </div>
+                )}
                 {m.pending && (
                   <div className="mt-2.5 flex gap-2">
                     <button
                       onClick={() => {
                         onApply(m.pending!);
-                        say([{ text: "Done. Your bot uses the new rules from now on." }]);
+                        // Running copies keep the settings they started with (Strike can't resize a copy in place).
+                        const running = !context.demo && context.copies.length > 0;
+                        say([{ text: running ? "Done. New copies use these rules; a copy that's already running keeps its size and stop until it's replaced. Stop and start the bot to apply them now." : "Done. Your bot uses the new rules from now on." }]);
                       }}
                       className="rounded-full bg-mint px-3.5 py-1.5 text-xs font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]"
                     >
@@ -154,6 +199,7 @@ export function CopilotPanel({
             }}
           >
             <input
+              ref={input}
               value={draft}
               onChange={(e) => setDraft(e.target.value.slice(0, 1200))}
               placeholder="Ask anything in your own words…"

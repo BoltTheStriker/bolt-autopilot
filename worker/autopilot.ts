@@ -21,14 +21,50 @@ export type AutoRules = {
   stopLossPct: number; // 0.05–0.30 of a copy: Strike ends the copy at this loss
   profitLockPct: number | null; // bank a copy's profit at +X% and copy the trader again; null = off
   dailyLossPct: number; // 0.03–0.25 of the budget: stop every copy for the day
+  /** Stop the whole bot (every copy, then off) once the profit since Start reaches this many dollars; null = off. */
+  stopAtProfitUsd?: number | null;
+  /** Stop the whole bot once the loss since Start reaches this many dollars (copies that already ended count); null = off. */
+  stopAtLossUsd?: number | null;
+  /** Copy size against the trader's (Strike's ratio multiplier), up to the risk level's ceiling; null = the level's default. */
+  boost?: number | null;
+  /** Stop for the day (copies closed, back tomorrow) once today's profit reaches this many dollars; null = off. */
+  dailyProfitUsd?: number | null;
+  /** No copying until this time (ms); copies close and the bot picks up again by itself; null = not paused. */
+  pauseUntil?: number | null;
+  /** No copying on Saturdays and Sundays (UTC): copies close for the weekend. */
+  weekdaysOnly?: boolean;
+  /** Traders never to copy: full addresses, or the short 0x1234…abcd form the app shows. */
+  avoid?: string[];
 };
 
 /** What each risk level means. Users can tighten leverage / stop-loss beyond these. */
-export const RISK_LEVELS: Record<Risk, { deploy: number; maxLeverage: number; stopLossPct: number; multiplier: number; dailyLossPct: number }> = {
-  low: { deploy: 0.5, maxLeverage: 3, stopLossPct: 0.1, multiplier: 1, dailyLossPct: 0.05 },
-  medium: { deploy: 0.75, maxLeverage: 5, stopLossPct: 0.15, multiplier: 1, dailyLossPct: 0.08 },
-  high: { deploy: 1, maxLeverage: 10, stopLossPct: 0.2, multiplier: 2, dailyLossPct: 0.12 },
+export const RISK_LEVELS: Record<Risk, { deploy: number; maxLeverage: number; stopLossPct: number; multiplier: number; maxBoost: number; dailyLossPct: number }> = {
+  low: { deploy: 0.5, maxLeverage: 3, stopLossPct: 0.1, multiplier: 1, maxBoost: 1, dailyLossPct: 0.05 },
+  medium: { deploy: 0.75, maxLeverage: 5, stopLossPct: 0.15, multiplier: 1, maxBoost: 2, dailyLossPct: 0.08 },
+  high: { deploy: 1, maxLeverage: 10, stopLossPct: 0.2, multiplier: 2, maxBoost: 3, dailyLossPct: 0.12 },
 };
+
+/** The copy size a rule set runs at: the user's boost, or the level's default, never above the level's ceiling. */
+export const boostOf = (r: AutoRules) => Math.min(r.boost ?? RISK_LEVELS[r.risk].multiplier, RISK_LEVELS[r.risk].maxBoost);
+
+/** Whether the rules say never to copy this trader (full address, or the app's short form). */
+export function avoids(r: AutoRules, lead: string): boolean {
+  const l = lead.toLowerCase();
+  return (r.avoid ?? []).some((a) => {
+    const x = a.toLowerCase();
+    if (!x.includes("…")) return x === l;
+    const [head, tail] = x.split("…");
+    return l.startsWith(head) && l.endsWith(tail);
+  });
+}
+
+/** Why the bot may not copy right now by the user's own schedule (a timed pause, the weekend), or null. */
+export function pausedNow(r: AutoRules, now: number): string | null {
+  if (r.pauseUntil && r.pauseUntil > now) return `Paused until ${new Date(r.pauseUntil).toUTCString().replace(/:\d\d GMT$/, " UTC")}, as you asked`;
+  const day = new Date(now).getUTCDay();
+  if (r.weekdaysOnly && (day === 0 || day === 6)) return "Weekend break, as you asked: copying picks up again on Monday (UTC)";
+  return null;
+}
 
 export const MIN_COPY_USD = 50; // smaller copies skip most of a trader's orders
 export const BETA_MAX_BUDGET_USD = 500;
@@ -51,8 +87,16 @@ export function sanitizeRules(x: unknown, maxBudget = BETA_MAX_BUDGET_USD): Auto
   if (nums.some((n) => !Number.isFinite(n))) return null;
   const lock = r.profitLockPct === null || r.profitLockPct === undefined ? null : Number(r.profitLockPct);
   if (lock !== null && !Number.isFinite(lock)) return null;
+  // Whole-bot targets in dollars: a positive amount, or off (null). Anything else is off.
+  const usdOrNull = (v: unknown) => (v === null || v === undefined || !(Number(v) >= 1) ? null : Math.round(Number(v) * 100) / 100);
+  const pauseAt = r.pauseUntil === null || r.pauseUntil === undefined ? NaN : typeof r.pauseUntil === "string" ? Date.parse(r.pauseUntil) : Number(r.pauseUntil);
+  const avoid = (Array.isArray(r.avoid) ? r.avoid : [])
+    .map((a) => String(a).trim().toLowerCase())
+    .filter((a) => /^0x[0-9a-f]{3,}(…[0-9a-f]{3,})?$/.test(a) && (a.includes("…") || a.length === 42))
+    .slice(0, 20);
+  const budget = clamp(Number(r.budgetUsd), 0, maxBudget);
   return {
-    budgetUsd: clamp(Number(r.budgetUsd), 0, maxBudget),
+    budgetUsd: budget,
     risk: r.risk as Risk,
     goal: r.goal as Goal,
     markets: r.markets as Markets,
@@ -61,6 +105,13 @@ export function sanitizeRules(x: unknown, maxBudget = BETA_MAX_BUDGET_USD): Auto
     stopLossPct: clamp(Number(r.stopLossPct), 0.05, level.stopLossPct),
     profitLockPct: lock === null ? null : clamp(lock, 0.05, 0.5),
     dailyLossPct: clamp(Number(r.dailyLossPct), 0.03, level.dailyLossPct),
+    stopAtProfitUsd: usdOrNull(r.stopAtProfitUsd),
+    stopAtLossUsd: usdOrNull(r.stopAtLossUsd) === null ? null : Math.min(usdOrNull(r.stopAtLossUsd)!, Math.max(1, budget)),
+    boost: r.boost === null || r.boost === undefined || !Number.isFinite(Number(r.boost)) ? null : Math.round(clamp(Number(r.boost), 1, level.maxBoost)),
+    dailyProfitUsd: usdOrNull(r.dailyProfitUsd),
+    pauseUntil: Number.isFinite(pauseAt) && pauseAt > 0 ? pauseAt : null,
+    weekdaysOnly: r.weekdaysOnly === true,
+    avoid: [...new Set(avoid)],
   };
 }
 
@@ -145,7 +196,7 @@ export function pickTraders(cands: Candidate[], rules: AutoRules, held: string[]
   // New picks must be copyable at this user's own copy size (bigger copies can follow more traders).
   const perCopy = (rules.budgetUsd * RISK_LEVELS[rules.risk].deploy) / Math.max(1, rules.traders);
   const keepIds = new Set(held.map((h) => h.toLowerCase()));
-  cands = cands.filter((c) => keepIds.has(c.lead.toLowerCase()) || coverageFor(c, perCopy) >= MIN_COVERAGE);
+  cands = cands.filter((c) => !avoids(rules, c.lead) && (keepIds.has(c.lead.toLowerCase()) || coverageFor(c, perCopy) >= MIN_COVERAGE));
   const fits = cands.filter((c) => (rules.markets === "realworld" ? c.realWorldShare >= 0.3 : rules.markets === "crypto" ? c.realWorldShare <= 0.7 : true));
   const by =
     rules.goal === "steady"
@@ -175,7 +226,7 @@ export function copySpecs(picks: Candidate[], rules: AutoRules, allSymbols: stri
     amount,
     stopLossUsd: Math.max(1, Math.round(amount * rules.stopLossPct * 100) / 100),
     maxLeverage: rules.maxLeverage,
-    multiplier: level.multiplier,
+    multiplier: boostOf(rules),
     // No single symbol may take more than half a copy's money.
     maxMarginPerSymbol: Math.floor(amount * 0.5 * 100) / 100,
     excludedSymbols: excluded,
@@ -192,6 +243,14 @@ export function describeRules(r: AutoRules): string {
     `leverage capped at ${r.maxLeverage}x, each copy stops at −${Math.round(r.stopLossPct * 100)}%`,
     r.profitLockPct ? `profit locked at +${Math.round(r.profitLockPct * 100)}%` : "no profit lock",
     `everything stops for the day at −${Math.round(r.dailyLossPct * 100)}%`,
+    ...(boostOf(r) > 1 ? [`copies at ${boostOf(r)}× the trader's size`] : []),
+    ...(r.dailyProfitUsd ? [`stops for the day once it's up $${r.dailyProfitUsd.toFixed(2)} that day`] : []),
+    ...(r.weekdaysOnly ? ["weekdays only (no copies on weekends)"] : []),
+    ...(r.pauseUntil && r.pauseUntil > Date.now() ? [`paused until ${new Date(r.pauseUntil).toUTCString().replace(/:\d\d GMT$/, " UTC")}`] : []),
+    ...(r.avoid?.length ? [`never copies ${r.avoid.length} trader${r.avoid.length > 1 ? "s" : ""} you blocked`] : []),
+    ...(r.stopAtProfitUsd || r.stopAtLossUsd
+      ? [`the bot stops for good ${[r.stopAtProfitUsd ? `at +$${r.stopAtProfitUsd.toFixed(2)} profit` : "", r.stopAtLossUsd ? `at −$${r.stopAtLossUsd.toFixed(2)} loss` : ""].filter(Boolean).join(" or ")} since Start`]
+      : []),
   ].join("; ");
 }
 

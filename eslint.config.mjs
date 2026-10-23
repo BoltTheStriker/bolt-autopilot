@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Video and pitch tooling (Playwright capture scripts), not the app; also excluded from tsconfig.
+    "brand/**",
   ]),
 ]);
 

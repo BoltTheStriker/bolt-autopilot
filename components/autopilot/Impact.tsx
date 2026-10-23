@@ -95,30 +95,39 @@ export function ImpactPage() {
               Users, volume and liquidity that land on Strike Finance through Bolt. Live numbers from Strike&apos;s API, the Bolt server and Cardano, refreshed every minute.
             </p>
             <p className="mt-3 font-mono text-xs text-muted">{at ? `Updated ${new Date(at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : "Loading…"}</p>
+            <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-muted">
+              <span>Every number says what it is:</span>
+              {(Object.keys(TAGS) as Tag[]).map((t) => (
+                <span key={t} className="inline-flex items-center gap-1.5">
+                  <TagChip tag={t} />
+                  <span className="text-white/40">{TAGS[t].means}</span>
+                </span>
+              ))}
+            </div>
           </FadeUp>
 
           <div className="mt-12 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Kpi value={usd(strikeVolume)} label="Copy-trading volume on Strike" source="Strike" />
-            <Kpi value={num(strikeTrades)} label="Copy trades executed on Strike" source="Strike" />
-            <Kpi value={num(coin?.holders)} label="$BOLT holders" source="Cardano" />
-            <Kpi value={`₳${compact(coin?.fees?.holders)}`} label="Fees paid to holders, in STRIKE" source="Solada" />
+            <Kpi value={usd(strikeVolume)} label="Copy-trading volume on Strike" source="Strike · real trades" />
+            <Kpi value={num(strikeTrades)} label="Copy trades executed on Strike" source="Strike · real trades" />
+            <Kpi value={num(coin?.holders)} label="$BOLT holders" source="Cardano · on-chain" />
+            <Kpi value={`₳${compact(coin?.fees?.holders)}`} label="Fees paid to holders, in STRIKE" source="Solada · on-chain" />
           </div>
         </div>
       </section>
 
       <Block id="users" eyebrow="Users" title={<>New Strike users, <span className="text-gradient">through Bolt.</span></>} intro="Every Autopilot user opens (or links) a Strike account through Bolt's builder code, and their copies run on Strike.">
-        <Stat value={num(impact?.autopilot.accounts)} label="Strike accounts connected through Bolt" note="builder code bolt_dev" />
-        <Stat value={num(impact?.autopilot.botsOn)} label="Autopilot bots switched on" />
-        <Stat value={num(impact?.autopilot.copiesRunning)} label="Autopilot copies running now" />
-        <Stat value={num(impact?.holders.demoBots)} label="Demo bots run by $BOLT holders" note="on live Strike traders" />
-        <Stat value={num(impact?.holders.cupPlayers)} label="Bot Cup players" />
-        <Stat value={num(impact?.autopilot.tradersRanked)} label="Strike traders ranked right now" />
+        <Stat tag="count" value={num(impact?.autopilot.accounts)} label="Strike accounts connected through Bolt" note="builder code bolt_dev" />
+        <Stat tag="count" value={num(impact?.autopilot.botsOn)} label="Autopilot bots switched on" />
+        <Stat tag="count" value={num(impact?.autopilot.copiesRunning)} label="Autopilot copies running now" />
+        <Stat tag="count" value={num(impact?.holders.demoBots)} label="Demo bots run by $BOLT holders" note="on live Strike traders" />
+        <Stat tag="count" value={num(impact?.holders.cupPlayers)} label="Bot Cup players" />
+        <Stat tag="count" value={num(impact?.autopilot.tradersRanked)} label="Strike traders ranked right now" />
       </Block>
 
       <Block id="volume" eyebrow="Volume" title={<>Trading volume <span className="text-gradient">on Strike.</span></>} intro="Copy trades placed through Strike's engine by the live $BOLT bot and Autopilot users.">
-        <Stat value={usd(strikeVolume)} label="Live $BOLT bot account, all copies" note={`${num(strikeTrades)} trades · Strike stats`} />
-        <Stat value={usd(impact?.autopilot.volumeUsd)} label="Autopilot users' copies" note={`${num(impact?.autopilot.orders)} filled orders`} />
-        <Stat value={`₳${compact(coin?.volumeAda)}`} label="$BOLT token trading volume" note="the community behind the bot" />
+        <Stat tag="real" value={usd(strikeVolume)} label="Live $BOLT bot account, all copies" note={`${num(strikeTrades)} trades · Strike stats`} />
+        <Stat tag="real" value={usd(impact?.autopilot.volumeUsd)} label="Autopilot users' copies" note={`${num(impact?.autopilot.orders)} filled orders`} />
+        <Stat tag="chain" value={`₳${compact(coin?.volumeAda)}`} label="$BOLT token trading volume" note="the community behind the bot" />
       </Block>
 
       <section id="benchmark" className="mx-auto max-w-6xl scroll-mt-28 px-4 pt-24 sm:px-6">
@@ -130,21 +139,21 @@ export function ImpactPage() {
       </section>
 
       <Block id="bot" eyebrow="The live bot" title={<>Real money, <span className="text-gradient">running on Strike.</span></>} intro="The same engine as Autopilot, copy-trading on Strike with the $BOLT team's own money.">
-        <Stat value={day(liveSince)} label="Live with real money since" />
-        <Stat value={num(impact?.liveBot.copies ?? live?.account?.subs)} label="Copies running now" />
-        <Stat value={liveProfit === null ? "—" : `${liveProfit >= 0 ? "+" : "−"}${usd(Math.abs(liveProfit), 2)}`} label="Profit so far" note="equity minus money moved in, from Strike" />
+        <Stat tag="real" value={day(liveSince)} label="Live with real money since" />
+        <Stat tag="real" value={num(impact?.liveBot.copies ?? live?.account?.subs)} label="Copies running now" />
+        <Stat tag="real" value={liveProfit === null ? "—" : `${liveProfit >= 0 ? "+" : "−"}${usd(Math.abs(liveProfit), 2)}`} label="Profit so far" note="equity minus money moved in, from Strike" />
       </Block>
 
       <Block id="realfi" eyebrow="Liquidity · RealFi" title={<>RealFi liquidity <span className="text-gradient">on Strike.</span></>} intro="Bolt brings RealFi's sUSDrf into Strike's Borrow & Earn; one-tap pledging arrives with Strike's RealFi API.">
-        <Stat value={slp?.susdrf ? `${(slp.susdrf.yieldApr * 100).toFixed(1)}%` : "—"} label="sUSDrf yield (Strike-wide)" note="RealFi's 28-day exchange-rate growth" />
-        <Stat value={slp ? `${(slp.apr * 100).toFixed(1)}%` : "—"} label="SLP APR today (Strike-wide)" />
-        <Stat value={slp?.susdrf ? usd(slp.susdrf.debt) : "—"} label="Drawn into SLP against sUSDrf (Strike-wide)" note={slp?.susdrf ? `${slp.susdrf.openLines} open lines` : undefined} />
+        <Stat tag="strike" value={slp?.susdrf ? `${(slp.susdrf.yieldApr * 100).toFixed(1)}%` : "—"} label="sUSDrf yield (Strike-wide)" note="RealFi's 28-day exchange-rate growth" />
+        <Stat tag="strike" value={slp ? `${(slp.apr * 100).toFixed(1)}%` : "—"} label="SLP APR today (Strike-wide)" />
+        <Stat tag="strike" value={slp?.susdrf ? usd(slp.susdrf.debt) : "—"} label="Drawn into SLP against sUSDrf (Strike-wide)" note={slp?.susdrf ? `${slp.susdrf.openLines} open lines` : undefined} />
       </Block>
 
       <Block id="community" eyebrow="Community" title={<>A community that <span className="text-gradient">grows Strike.</span></>} intro="$BOLT pays half of its fees to holders in STRIKE, and the bot's profits buy back and burn $BOLT.">
-        <Stat value={num(coin?.holders)} label="$BOLT holders" />
-        <Stat value={`₳${compact(coin?.fees?.holders)}`} label="Fees paid to holders in STRIKE" />
-        <Stat value={compact(coin?.burned)} label="$BOLT burned" />
+        <Stat tag="chain" value={num(coin?.holders)} label="$BOLT holders" />
+        <Stat tag="chain" value={`₳${compact(coin?.fees?.holders)}`} label="Fees paid to holders in STRIKE" />
+        <Stat tag="chain" value={compact(coin?.burned)} label="$BOLT burned" />
       </Block>
 
       <section className="mx-auto max-w-6xl px-4 pt-20 sm:px-6">
@@ -190,7 +199,7 @@ function Benchmark({ bench }: { bench: Bench | null }) {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
           <span className="flex items-center gap-2"><span className="h-0.5 w-5 rounded bg-mint" />Bolt&apos;s picks</span>
           <span className="flex items-center gap-2"><span className="h-0.5 w-5 rounded bg-white/45" />Top 10 by 30-day return</span>
-          <span className="ml-auto font-mono text-muted">Since {started} · updated every 6 hours</span>
+          <span className="ml-auto flex items-center gap-2 font-mono text-muted"><TagChip tag="paper" />Since {started} · updated every 6 hours</span>
         </div>
         {young ? (
           <p className="mt-6 rounded-2xl bg-white/[0.03] px-4 py-6 text-center text-sm text-soft">
@@ -236,9 +245,30 @@ function Block({ id, eyebrow, title, intro, children }: { id: string; eyebrow: s
   );
 }
 
-function Stat({ value, label, note }: { value: string; label: string; note?: string }) {
+/** Where a number comes from, so real money, counts, on-chain data and paper results never blur together. */
+const TAGS = {
+  real: { label: "Real trades", means: "money traded on Strike" },
+  count: { label: "Live count", means: "from the Bolt server, now" },
+  chain: { label: "On-chain", means: "from Cardano" },
+  strike: { label: "Strike-wide", means: "all of Strike, not only Bolt" },
+  paper: { label: "Paper", means: "live data, no real orders" },
+} as const;
+type Tag = keyof typeof TAGS;
+
+function TagChip({ tag }: { tag: Tag }) {
   return (
-    <InView className="card rounded-3xl p-6">
+    <span className={`rounded-full border px-2 py-0.5 font-mono text-[10px] tracking-wider uppercase ${tag === "real" ? "border-mint/35 text-mint" : "border-white/15 text-soft"}`}>{TAGS[tag].label}</span>
+  );
+}
+
+function Stat({ value, label, note, tag }: { value: string; label: string; note?: string; tag?: Tag }) {
+  return (
+    <InView className="card relative rounded-3xl p-6">
+      {tag && (
+        <span className="absolute top-5 right-5">
+          <TagChip tag={tag} />
+        </span>
+      )}
       <p className="font-display text-4xl font-bold text-white">{value}</p>
       <p className="mt-2 text-sm text-soft">{label}</p>
       {note && <p className="mt-1 text-xs text-muted">{note}</p>}

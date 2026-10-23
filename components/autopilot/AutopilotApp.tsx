@@ -6,11 +6,12 @@ import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { checkAdminKey, readAdminKey } from "@/lib/adminPreview";
-import { autopilot, saveSession, savedSession, type AutoMe, type AutoMode, type AutoStatus, type Session, type SlpInfo } from "@/lib/autopilotApi";
+import { autopilot, saveSession, savedSession, type AutoMe, type AutoMode, type AutoStatus, type CopilotAction, type Session, type SlpInfo } from "@/lib/autopilotApi";
 import { DEMO_BALANCE, demoCopies, demoValue, startDemo as startLiveDemo, stepDemo, type DemoLive } from "@/lib/autopilotDemo";
 import { connectAddress, installedWallets, sameAccount, signAndSubmit, signText, walletBalance, walletUtxos, type InstalledWallet } from "@/lib/wallet";
 import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "@/worker/autopilot";
-import { CopilotPanel } from "./Copilot";
+import { askConfirm, ConfirmHost, type ConfirmOptions } from "../Confirm";
+import { askCopilot, CopilotPanel } from "./Copilot";
 import { SUSDRF_UNIT, type RealFiActions } from "./RealFi";
 import { encodeDemoCard, GOAL_LABEL, RISK_LABEL } from "@/lib/autopilotShare";
 import { DepositModal, type DepositStage } from "./Deposit";
@@ -182,7 +183,9 @@ export function AutopilotApp() {
           setMarks(r.marks);
           setDemo((d) => {
             if (!d.live || !d.rules) return d;
-            const next = { ...d, live: stepDemo(d.live, r.marks, d.rules, Date.now(), { autopilot: d.mode === "autopilot" }) };
+            const live = stepDemo(d.live, r.marks, d.rules, Date.now(), { autopilot: d.mode === "autopilot" });
+            // A stop target ended the run: the demo bot switches off, like a real one.
+            const next = { ...d, live, mode: live.done && !d.live.done ? ("off" as const) : d.mode };
             saveDemo(next);
             return next;
           });
@@ -337,7 +340,13 @@ export function AutopilotApp() {
         curve: demo.live.curve.map(([, v]) => v),
         startedAt: demo.live.startedAt,
         halted: demo.live.haltedDay !== null && demo.live.haltedDay === demo.live.dayStart,
-        autopilot: demo.mode === "autopilot" ? { reason: demo.live.autoNote?.text.replace(/^Autopilot: /, "") ?? null, rulesText: null, at: demo.live.autoNote?.at ?? null, checkedAt: null } : undefined,
+        autopilot:
+          demo.mode === "autopilot"
+            ? { reason: demo.live.autoNote?.text.replace(/^Autopilot: /, "") ?? null, rulesText: null, at: demo.live.autoNote?.at ?? null, checkedAt: demo.live.decisions?.[0]?.at ?? null, decisions: demo.live.decisions ?? [] }
+            : undefined,
+        stopLossPct: demo.rules.stopLossPct,
+        targets: { profit: demo.rules.stopAtProfitUsd ?? null, loss: demo.rules.stopAtLossUsd ?? null, run: demoValue(demo.live, sl) - DEMO_BALANCE },
+        today: demoValue(demo.live, sl) - demo.live.dayStartValue,
       };
     }
     if (!me) return null;
@@ -357,7 +366,7 @@ export function AutopilotApp() {
       reserve: Math.max(0, me.balance?.available ?? 0), // free on the main account (not reserved by copies)
       parked: me.parked ?? 0,
       earn: me.earn ?? null,
-      halted: me.user.log.some((l) => /Daily loss limit/.test(l.text) && (me.user.lastSyncAt ?? 0) - l.at < 86_400_000),
+      halted: me.user.log.some((l) => /Daily loss limit|Daily profit target/.test(l.text) && (me.user.lastSyncAt ?? 0) - l.at < 86_400_000),
       // The profit chart: the server's history when it has one, else what this browser recorded.
       ...(() => {
         const h = (me.user.history?.length ?? 0) >= 2 ? me.user.history! : localHist;
@@ -365,9 +374,21 @@ export function AutopilotApp() {
       })(),
       syncedAt: me.user.liveAt ?? me.user.lastSyncAt ?? null,
       live: !!me.user.liveAt,
+      stopLossPct: me.user.rules?.stopLossPct,
+      // Today's profit: now against the first point recorded today (UTC).
+      today: (() => {
+        const day = new Date().toISOString().slice(0, 10);
+        const first = (me.user.history ?? []).find((p) => new Date(p.at).toISOString().slice(0, 10) === day);
+        return first ? me.user.copies.reduce((t, c) => t + c.pnl, 0) - first.pnl : null;
+      })(),
+      targets: {
+        profit: me.user.rules?.stopAtProfitUsd ?? null,
+        loss: me.user.rules?.stopAtLossUsd ?? null,
+        run: (me.user.run?.closed ?? 0) + me.user.copies.reduce((t, c) => t + c.pnl, 0),
+      },
       autopilot:
         me.user.mode === "autopilot"
-          ? { reason: me.user.autopilot?.reason ?? null, rulesText: me.user.autopilot?.rulesText ?? null, at: me.user.autopilot?.at ?? null, checkedAt: me.user.reviewedAt ?? null }
+          ? { reason: me.user.autopilot?.reason ?? null, rulesText: me.user.autopilot?.rulesText ?? null, at: me.user.autopilot?.at ?? null, checkedAt: me.user.reviewedAt ?? null, decisions: me.user.decisions ?? [] }
           : undefined,
       idle:
         me.user.mode !== "off" && me.user.copies.length === 0
@@ -406,15 +427,22 @@ export function AutopilotApp() {
 
   // Before stopping a real bot: the profit right now, live from Strike, so nobody stops on a stale number.
   async function stopWithLiveCheck() {
-    let now = "";
+    let note: ConfirmOptions["note"];
     try {
       const l = await autopilot.live(session!);
       const pct = l.working > 0 ? ` (${l.pnl >= 0 ? "+" : "−"}${Math.abs((l.pnl / l.working) * 100).toFixed(2)}%)` : "";
-      now = `Your copies are at ${l.pnl >= 0 ? "+" : "−"}$${Math.abs(l.pnl).toFixed(2)}${pct} right now, live from Strike.\n\n`;
+      note = { text: `${l.pnl >= 0 ? "+" : "−"}$${Math.abs(l.pnl).toFixed(2)}${pct} right now, live from Strike`, tone: l.pnl >= 0 ? "pos" : "neg" };
     } catch {
-      now = ""; // couldn't read it: the plain question below still works
+      note = undefined; // couldn't read it: the plain question still works
     }
-    if (confirm(`${now}Stop the bot? Its copies close at market price.`)) void setMode("off");
+    const ok = await askConfirm({
+      title: "Stop the bot?",
+      note,
+      body: "Every copy closes at market price, so the final result can differ a little from this number. Your money stays in your Strike account.",
+      confirmLabel: "Stop the bot",
+      danger: true,
+    });
+    if (ok) void setMode("off");
   }
 
   async function saveRules(rules: AutoRules) {
@@ -443,6 +471,11 @@ export function AutopilotApp() {
       await refresh(session);
     });
   }
+  // The copilot's one-tap actions (the tap is the confirmation): only once there are rules to run.
+  const copilotActs = step >= 3 && !!savedRules;
+  function actFromCopilot(a: CopilotAction) {
+    void setMode(a === "stop" ? "off" : a === "autopilot" ? "autopilot" : "on");
+  }
   // The copilot tweaks the form while you're editing, otherwise your saved rules.
   function applyFromCopilot(r: AutoRules) {
     if (step === 2 || editing) {
@@ -454,7 +487,15 @@ export function AutopilotApp() {
   const copilotRules = step === 2 || editing ? draft : savedRules;
   const chatOn = !!status?.copilot;
   const copilotContext = useMemo(
-    () => ({ demo: demoOn, rules: copilotRules, balance: view?.balance ?? null, copies: (view?.copies ?? []).map((c) => ({ lead: c.lead, amount: c.amount, pnl: c.pnl })) }),
+    () => ({
+      demo: demoOn,
+      rules: copilotRules,
+      balance: view?.balance ?? null,
+      copies: (view?.copies ?? []).map((c) => ({ lead: c.lead, amount: c.amount, pnl: c.pnl })),
+      mode: view?.mode ?? null,
+      sinceStart: view?.targets?.run ?? null,
+      today: view?.today ?? null,
+    }),
     [demoOn, copilotRules, view],
   );
 
@@ -578,7 +619,7 @@ export function AutopilotApp() {
         {error && <p className="rounded-2xl border border-neg/30 bg-neg/10 px-4 py-3 text-sm text-neg">{error}</p>}
 
         <AnimatePresence mode="wait">
-          <motion.div key={showRules ? "rules" : step === 4 ? `dash-${tab}` : step} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.25 }} className="space-y-4">
+          <motion.div key={showRules ? "rules" : step === 4 ? "dash" : step} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.25 }} className="space-y-4">
             {step === 0 && <ConnectCard wallets={wallets} busy={busy === "connect"} disabled={closed} onConnect={connect} onDemo={startDemo} />}
             {step === 1 && session && pendingDeposit && <DepositPending {...pendingDeposit} onContinue={() => setSkipFund(true)} />}
             {step === 1 && session && !pendingDeposit && (
@@ -601,7 +642,7 @@ export function AutopilotApp() {
                 saveLabel={demoOn ? "Use these rules" : undefined}
                 apr={slp?.apr}
                 traders={ranked}
-                onAsk={() => setSheet(true)}
+                onAsk={() => (setSheet(true), askCopilot())}
                 onChange={onDraft}
                 onSave={(r) => void saveRules(r)}
                 onCancel={editing ? () => setEditing(false) : undefined}
@@ -613,50 +654,53 @@ export function AutopilotApp() {
             {step === 4 && !editing && view && (
               <>
                 <TabBar tab={tab} onTab={setTab} />
-                {tab === "overview" && (
-                  <>
-                    {pendingDeposit && (
-                      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-mint/25 bg-mint/[0.06] px-4 py-3 text-sm">
-                        <span className="size-2 animate-pulse rounded-full bg-mint" />
-                        <span>
-                          Your {pendingDeposit.amount.toLocaleString("en-US", { maximumFractionDigits: 2 })} {pendingDeposit.asset} deposit is on its way: usually 2 to 10 minutes.
-                        </span>
-                        {pendingDeposit.txHash && (
-                          <a href={`https://cardanoscan.io/transaction/${pendingDeposit.txHash}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-muted hover:text-white">
-                            Cardanoscan ↗
-                          </a>
-                        )}
+                {/* Switching tabs: the tab bar stays put and only the content fades in, quickly (no slide, no wait). */}
+                <motion.div key={tab} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15, ease: "easeOut" }} className="space-y-4">
+                  {tab === "overview" && (
+                    <>
+                      {pendingDeposit && (
+                        <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-mint/25 bg-mint/[0.06] px-4 py-3 text-sm">
+                          <span className="size-2 animate-pulse rounded-full bg-mint" />
+                          <span>
+                            Your {pendingDeposit.amount.toLocaleString("en-US", { maximumFractionDigits: 2 })} {pendingDeposit.asset} deposit is on its way: usually 2 to 10 minutes.
+                          </span>
+                          {pendingDeposit.txHash && (
+                            <a href={`https://cardanoscan.io/transaction/${pendingDeposit.txHash}`} target="_blank" rel="noreferrer" className="ml-auto text-xs text-muted hover:text-white">
+                              Cardanoscan ↗
+                            </a>
+                          )}
+                        </div>
+                      )}
+                      <StatusCard
+                        v={view}
+                        busy={busy === "mode"}
+                        onMode={(m) => void setMode(m)}
+                        onStop={!demoOn && session ? () => void stopWithLiveCheck() : undefined}
+                        onEdit={() => setEditing(true)}
+                        onLeave={leaveDemo}
+                        onRestart={() => void runDemo(demo.rules!, demo.mode === "off" ? "on" : demo.mode, "Demo restarted.")}
+                        onWithdraw={!demoOn && session ? () => setWithdrawOpen(true) : undefined}
+                        onDeposit={!demoOn && session ? () => (setError(""), setDepositOpen(true)) : undefined}
+                        onShare={view.copies.length > 0 ? () => setShare(shareNow()) : undefined}
+                      />
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <TradersList v={view} limit={3} />
+                        <div className="space-y-4">
+                          <Allocation v={view} apr={slp?.apr ?? null} />
+                          <Activity v={view} limit={4} />
+                        </div>
                       </div>
-                    )}
-                    <StatusCard
-                      v={view}
-                      busy={busy === "mode"}
-                      onMode={(m) => void setMode(m)}
-                      onStop={!demoOn && session ? () => void stopWithLiveCheck() : undefined}
-                      onEdit={() => setEditing(true)}
-                      onLeave={leaveDemo}
-                      onRestart={() => void runDemo(demo.rules!, demo.mode === "off" ? "on" : demo.mode, "Demo restarted.")}
-                      onWithdraw={!demoOn && session ? () => setWithdrawOpen(true) : undefined}
-                      onDeposit={!demoOn && session ? () => (setError(""), setDepositOpen(true)) : undefined}
-                      onShare={view.copies.length > 0 ? () => setShare(shareNow()) : undefined}
-                    />
-                    <div className="grid gap-4 xl:grid-cols-2">
-                      <TradersList v={view} limit={3} />
-                      <div className="space-y-4">
-                        <Allocation v={view} apr={slp?.apr ?? null} />
-                        <Activity v={view} limit={4} />
-                      </div>
-                    </div>
-                  </>
-                )}
-                {tab === "traders" && <TradersList v={view} />}
-                {tab === "earn" && <EarnPanel v={view} slp={slp} realfi={me?.realfi} actions={realfiActions} />}
-                {tab === "activity" && (
-                  <>
-                    {!demoOn && me?.transfers && <Transfers list={me.transfers} />}
-                    <Activity v={view} />
-                  </>
-                )}
+                    </>
+                  )}
+                  {tab === "traders" && <TradersList v={view} />}
+                  {tab === "earn" && <EarnPanel v={view} slp={slp} realfi={me?.realfi} actions={realfiActions} />}
+                  {tab === "activity" && (
+                    <>
+                      {!demoOn && me?.transfers && <Transfers list={me.transfers} />}
+                      <Activity v={view} />
+                    </>
+                  )}
+                </motion.div>
               </>
             )}
           </motion.div>
@@ -678,14 +722,14 @@ export function AutopilotApp() {
       {/* Copilot: docked on desktop, a sheet on phones. */}
       <aside className="hidden lg:block">
         <div className="sticky top-24 h-[calc(100vh-7.5rem)]">
-          <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} />
+          <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} onAction={copilotActs ? actFromCopilot : undefined} />
         </div>
       </aside>
       <div className="lg:hidden">
         <AnimatePresence>
           {sheet && (
             <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", stiffness: 300, damping: 34 }} className="fixed inset-x-2 bottom-2 z-[60] h-[75vh]">
-              <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} onClose={() => setSheet(false)} />
+              <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} onAction={copilotActs ? actFromCopilot : undefined} onClose={() => setSheet(false)} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -698,6 +742,7 @@ export function AutopilotApp() {
 
       <Tour steps={TOUR} open={tour} onClose={() => setTour(false)} />
       <ShareModal open={!!share} source={share} onClose={() => setShare(null)} />
+      <ConfirmHost />
       {session && me && <DepositModal open={depositOpen} wallets={myWallets} busy={busy === "deposit"} error={depositOpen ? error : ""} onDeposit={depositAda} onClose={() => (setDepositOpen(false), setError(""))} />}
       {session && me && (
         <WithdrawModal

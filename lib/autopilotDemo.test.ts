@@ -58,3 +58,37 @@ test("Autopilot mode: a stopped copy's money moves to the next best fit; the mon
   assert.equal(Math.round(demoValue(auto, rules.stopLossPct) * 100), Math.round(demoValue(plain, rules.stopLossPct) * 100)); // same money, moved
   assert.deepEqual(auto.bench, ["D"]);
 });
+
+test("Autopilot mode records its reviews: a check when switched on, the stop-loss move with its reason", () => {
+  const r = { ...rules, traders: 1 };
+  const d0 = startDemo([t("a", 0.9), t("b", 0.8)], { a: mark(0), b: mark(0) }, r, 0);
+  const d1 = stepDemo(d0, { a: mark(100), b: mark(0) }, r, 60_000, { autopilot: true });
+  assert.deepEqual([d1.decisions!.length, d1.decisions![0].why, d1.decisions![0].changed], [1, ["You switched on Autopilot"], false]);
+  assert.match(d1.decisions![0].limits, /Every copy is inside its stop-loss \(closest: a at \+1\.0%/);
+  const d2 = stepDemo(d1, { a: mark(-2_000), b: mark(0) }, r, 120_000, { autopilot: true });
+  assert.deepEqual([d2.decisions!.length, d2.decisions![0].why[0], d2.decisions![0].changed], [2, "a hit its stop-loss (−15%)", true]);
+  const d3 = stepDemo(d2, { a: mark(-2_000), b: mark(0) }, r, 180_000, { autopilot: true });
+  assert.equal(d3.decisions!.length, 2); // the next routine check waits an hour
+});
+
+test("a profit target closes every copy at its result and ends the run; the value stays put", () => {
+  const r = { ...rules, traders: 1, stopAtProfitUsd: 20 };
+  const d0 = startDemo([t("a", 0.9)], { a: mark(0) }, r, 0);
+  const d1 = stepDemo(d0, { a: mark(200) }, r, 60_000); // one $750 copy × 2% = +$15
+  assert.equal(d1.done, undefined);
+  const d2 = stepDemo(d1, { a: mark(400) }, r, 120_000); // × 4% = +$30
+  assert.match(d2.done!.text, /^Profit target reached: \+\$30\.00 since Start/);
+  assert.equal(demoValue(d2, r.stopLossPct), DEMO_BALANCE + 30);
+  const d3 = stepDemo(d2, { a: mark(-5_000) }, r, 180_000); // closed: the trader's moves no longer count
+  assert.equal(demoValue(d3, r.stopLossPct), DEMO_BALANCE + 30);
+});
+
+test("boost sizes the copies, blocked traders are skipped, and a daily profit target pauses the day", () => {
+  const r = { ...rules, risk: "high" as const, traders: 1, boost: 3, dailyProfitUsd: 50, avoid: ["0xaaaa…aaaa"] };
+  const lead = (x: string) => `0x${x.repeat(40)}`;
+  const d0 = startDemo([t(lead("a"), 0.9), t(lead("b"), 0.8)], { [lead("a")]: mark(0), [lead("b")]: mark(0) }, r, 0);
+  assert.deepEqual(d0.copies.map((c) => [c.lead, c.mult]), [[lead("b"), 3]]); // a is blocked; 3× size
+  const d1 = stepDemo(d0, { [lead("b")]: mark(300) }, r, 60_000); // $1,000 copy × 3% × 3 = +$90
+  assert.ok(d1.log.some((l) => /^Daily profit target reached \(\+\$90\.00 today/.test(l.text)));
+  assert.equal(d1.haltedDay, d1.dayStart);
+});

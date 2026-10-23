@@ -101,8 +101,8 @@ test("applyDecision: back to the user's own rules clears Autopilot's; no change 
   assert.equal(applyDecision(user(), { rules: null, drop: [], summary: "no changes needed.", by: "rules" }, NOW, []), "Autopilot checked your setup: no changes needed.");
 });
 
-test("aiDecision: reads Claude's forced tool call; rules beyond the limits are clamped when applied", async () => {
-  type Req = { tool_choice: { name: string }; messages: { content: string }[] };
+test("aiDecision: reads Claude's tool call; rules beyond the limits are clamped when applied", async () => {
+  type Req = { tool_choice: { type: string }; messages: { content: string }[] };
   let sent: Req | null = null;
   const fake = {
     beta: {
@@ -116,7 +116,7 @@ test("aiDecision: reads Claude's forced tool call; rules beyond the limits are c
   } as unknown as Pick<Anthropic, "beta">;
   const u = user();
   const d = await aiDecision(fake, u, { signals: [{ kind: "daily", detail: "daily review" }], copies: [{ lead: "0xAAA", amount: 150, pnl: 1 }, { lead: "0xBBB", amount: 150, pnl: 2 }], dayLossUsd: 0, held: [stats("0xAAA")], candidates: [stats("0xCCC")] });
-  assert.equal(sent!.tool_choice.name, "autopilot_decision");
+  assert.equal(sent!.tool_choice.type, "auto"); // Opus 5.5 rejects a forced tool_choice
   assert.match(sent!.messages[0].content, /user_limits/);
   assert.equal(d.by, "ai");
   applyDecision(u, d, NOW, ["0xAAA", "0xBBB"]);
@@ -128,4 +128,32 @@ test("aiDecision: reads Claude's forced tool call; rules beyond the limits are c
 test("aiDecision: no tool call is an error (the worker then uses the rules version)", async () => {
   const fake = { beta: { messages: { create: async () => ({ stop_reason: "refusal", content: [] }) } } } as unknown as Pick<Anthropic, "beta">;
   await assert.rejects(aiDecision(fake, user(), { signals: [], copies: [], dayLossUsd: 0, held: [], candidates: [] }));
+});
+
+test("applyDecision: records the trail (why, what changed, the limits check)", () => {
+  const u = user();
+  applyDecision(
+    u,
+    { rules: { ...mine, risk: "high", goal: "steady" }, drop: [{ lead: "0xAAA", reason: "left the ranking" }, { lead: "0xZZZ", reason: "not copied" }], summary: "Swapped a trader.", by: "ai" },
+    NOW,
+    ["0xAAA", "0xBBB"],
+    ["0xAAA left the bot's ranking of Strike traders"],
+  );
+  const r = u.decisions![0];
+  assert.equal(r.by, "ai");
+  assert.deepEqual(r.why, ["0xAAA left the bot's ranking of Strike traders"]);
+  assert.equal(r.did[0], "Stop copying 0xAAA: left the ranking");
+  assert.match(r.did[1], /^Run with: /);
+  assert.equal(r.limits, "Validator pulled 1 setting back inside your limits; skipped 1 stop (a trader not copied now, or the last copy).");
+  assert.equal(r.changed, true);
+  applyDecision(u, { rules: null, drop: [], summary: "Fine.", by: "rules", note: "Claude was unavailable" }, NOW + H, ["0xBBB"]);
+  assert.deepEqual([u.decisions!.length, u.decisions![0].did, u.decisions![0].limits, u.decisions![0].note], [2, ["Keep everything as it is"], "Everything stays inside your limits.", "Claude was unavailable"]);
+});
+
+test("aiDecision: a reply without the tool call is asked once more", async () => {
+  let calls = 0;
+  const call = { type: "tool_use", name: "autopilot_decision", input: { change_rules: false, rules: mine, drop: [], summary: "All fine." } };
+  const fake = { beta: { messages: { create: async () => (++calls === 1 ? { stop_reason: "end_turn", content: [{ type: "text", text: "Looks fine." }] } : { stop_reason: "tool_use", content: [call] }) } } } as unknown as Pick<Anthropic, "beta">;
+  const d = await aiDecision(fake, user(), { signals: [], copies: [], dayLossUsd: 0, held: [], candidates: [] });
+  assert.deepEqual([calls, d.summary, d.rules], [2, "All fine.", null]);
 });

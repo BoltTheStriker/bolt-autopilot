@@ -135,3 +135,69 @@ test("a copy Strike refuses is logged once, then skipped for a while", async () 
   assert.equal(u.lastError, undefined); // the sync itself didn't fail
   assert.deepEqual(calls, ["copy 0xbad $50", "copy 0xbad $50 (no leverage)"]); // tried once with, once without leverage
 });
+
+test("profit target: at +$X since Start the bot stops every copy and switches off", async () => {
+  const { client, pnl, calls } = fakeStrike(1);
+  const u = user();
+  u.rules = { ...u.rules!, dailyLossPct: 0.12, stopAtProfitUsd: 20 };
+  await syncUser(u, client, [spec("0xa"), spec("0xb")], T);
+  pnl["sub-0xa"] = 12;
+  pnl["sub-0xb"] = 5; // +$17: not yet
+  await syncUser(u, client, [spec("0xa"), spec("0xb")], T + 60_000);
+  assert.equal(u.mode, "on");
+  pnl["sub-0xb"] = 9; // +$21
+  await syncUser(u, client, [spec("0xa"), spec("0xb")], T + 120_000);
+  assert.equal(u.mode, "off");
+  assert.deepEqual(u.managed, {});
+  assert.ok(calls.includes("stop sub-0xa") && calls.includes("stop sub-0xb"));
+  assert.match(u.log.find((l) => /Profit target reached/.test(l.text))!.text, /\+\$21\.00 since Start \(your target was \+\$20\.00\)/);
+  assert.equal(u.run, undefined); // the run is over
+});
+
+test("loss stop counts copies that already ended (Strike's stop-loss) toward the total", async () => {
+  const { client, pnl, active } = fakeStrike(1);
+  const u = user();
+  u.rules = { ...u.rules!, dailyLossPct: 0.25, stopAtLossUsd: 25 };
+  await syncUser(u, client, [spec("0xa"), spec("0xb")], T);
+  pnl["sub-0xa"] = -15;
+  await syncUser(u, client, [spec("0xa"), spec("0xb")], T + 60_000);
+  active.find((s) => s.subscription_id === "sub-0xa")!.status = "stopped"; // Strike's stop-loss ended it at −$15
+  await syncUser(u, client, [spec("0xb")], T + 120_000);
+  assert.equal(u.run!.closed, -15);
+  assert.equal(u.mode, "on");
+  pnl["sub-0xb"] = -11; // −$15 − $11 = −$26
+  await syncUser(u, client, [spec("0xb")], T + 180_000);
+  assert.equal(u.mode, "off");
+  assert.match(u.log.find((l) => /Loss limit reached/.test(l.text))!.text, /−\$26\.00 since Start/);
+});
+
+test("daily profit target: at +$X today every copy closes until tomorrow", async () => {
+  const { client, pnl } = fakeStrike(1);
+  const u = user();
+  u.rules = { ...u.rules!, dailyProfitUsd: 10 };
+  await syncUser(u, client, [spec("0xa")], T);
+  pnl["sub-0xa"] = 11;
+  await syncUser(u, client, [spec("0xa")], T + 60_000);
+  assert.deepEqual(u.managed, {});
+  assert.equal(u.mode, "on"); // only for today
+  assert.ok(u.log.some((l) => /^Daily profit target reached \(\+\$11\.00 today/.test(l.text)));
+  await syncUser(u, client, [spec("0xa")], T + 24 * 3_600_000);
+  assert.ok(u.managed["0xa"]); // next day: back on
+});
+
+test("a timed pause closes the copies and the bot picks up again by itself; weekends too", async () => {
+  const { client } = fakeStrike(1);
+  const u = user();
+  await syncUser(u, client, [spec("0xa")], T);
+  u.rules = { ...u.rules!, pauseUntil: T + 6 * 3_600_000 };
+  await syncUser(u, client, [spec("0xa")], T + 60_000);
+  assert.deepEqual(u.managed, {});
+  assert.ok(u.log.some((l) => /^Paused until .* UTC, as you asked: closing every copy\.$/.test(l.text)));
+  await syncUser(u, client, [spec("0xa")], T + 7 * 3_600_000);
+  assert.ok(u.managed["0xa"]);
+  u.rules = { ...u.rules!, pauseUntil: null, weekdaysOnly: true };
+  const saturday = Date.parse("2026-10-24T12:00:00Z");
+  await syncUser(u, client, [spec("0xa")], saturday);
+  assert.deepEqual(u.managed, {});
+  assert.ok(u.log.some((l) => /^Weekend break/.test(l.text)));
+});

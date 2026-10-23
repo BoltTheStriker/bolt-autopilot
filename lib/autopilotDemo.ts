@@ -3,8 +3,8 @@
 // profit since your start (closed trades net of fees + open positions) divided by their account
 // size, the way Strike sizes copies. Your stop-losses, profit lock and daily limit apply.
 // An estimate on pretend money: real copies also pay fees and can fill differently.
-import type { AutoCopy } from "./autopilotApi.ts";
-import { copySpecs, MIN_COPY_USD, pickTraders, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "../worker/autopilot.ts";
+import type { AutoCopy, AutoDecision } from "./autopilotApi.ts";
+import { boostOf, copySpecs, MIN_COPY_USD, pausedNow, pickTraders, type AutoRules, type LiveMark, type PreviewTrader } from "../worker/autopilot.ts";
 
 export const DEMO_BALANCE = 1_000;
 const MAX_POINTS = 1_500;
@@ -20,6 +20,7 @@ export type DemoCopy = {
   ret: number; // latest return of this copy
   banked: number; // profit locked in so far
   stopped: number | null; // when its stop-loss closed it
+  closed?: number | null; // when a stop target closed it at its current result (kept in `banked`)
   open: string[]; // the trader's open positions last time we looked
 };
 export type DemoLive = {
@@ -32,6 +33,8 @@ export type DemoLive = {
   haltedDay: number | null;
   bench?: string[]; // the next best fits for these rules, for Autopilot to move money to
   autoNote?: { at: number; text: string }; // Autopilot's latest action
+  decisions?: AutoDecision[]; // Autopilot's reviews, newest first (the demo's are decided by rules, not Claude)
+  done?: { at: number; text: string }; // a stop target ended the demo run (the app switches it off)
 };
 export type DemoOptions = { autopilot?: boolean };
 
@@ -41,7 +44,7 @@ const money = (v: number) => `$${Math.abs(v).toFixed(2)}`;
 const dayOf = (t: number) => Math.floor(t / 86_400_000);
 
 export function copyValue(c: DemoCopy, stopLossPct: number): number {
-  return c.stopped !== null ? c.amount * (1 - stopLossPct) : c.amount * (1 + c.ret);
+  return c.stopped !== null ? c.amount * (1 - stopLossPct) : c.closed ? c.amount : c.amount * (1 + c.ret);
 }
 export function demoValue(d: DemoLive, stopLossPct: number): number {
   const working = d.copies.reduce((t, c) => t + c.amount, 0);
@@ -52,7 +55,7 @@ export function demoValue(d: DemoLive, stopLossPct: number): number {
 export function startDemo(traders: PreviewTrader[], marks: Record<string, LiveMark>, rules: AutoRules, now: number): DemoLive {
   const live = traders.filter((t) => (marks[t.lead]?.acct ?? 0) > 0);
   const specs = copySpecs(pickTraders(live, rules), rules, []);
-  const mult = RISK_LEVELS[rules.risk].multiplier;
+  const mult = boostOf(rules); // the user's boost (picks already skip blocked traders)
   const copies: DemoCopy[] = specs.map((s) => {
     const m = marks[s.lead];
     return { lead: s.lead, amount: s.amount, mult, acct: m.acct, basePnl: m.pnl, baseSince: m.since, carried: 0, ret: 0, banked: 0, stopped: null, open: m.positions.map(posKey) };
@@ -77,10 +80,11 @@ export function stepDemo(prev: DemoLive, marks: Record<string, LiveMark>, rules:
     d.dayStart = dayOf(now);
     d.dayStartValue = demoValue(d, rules.stopLossPct);
   }
-  const halted = d.haltedDay === d.dayStart;
+  // A timed pause or the weekend (the user's schedule) holds the demo still, like a halted day.
+  const halted = d.haltedDay === d.dayStart || !!pausedNow(rules, now);
   for (const c of d.copies) {
     const m = marks[c.lead];
-    if (!m || c.stopped !== null || halted) continue;
+    if (!m || c.stopped !== null || c.closed || halted || d.done) continue;
     if (m.since !== c.baseSince) {
       // The feed restarted: keep what this copy made so far and continue from the new baseline.
       c.carried = c.ret;
@@ -109,9 +113,29 @@ export function stepDemo(prev: DemoLive, marks: Record<string, LiveMark>, rules:
     }
   }
   const value = demoValue(d, rules.stopLossPct);
+  // The user's whole-bot targets: close every running copy at its current result and end the run.
+  const profit = value - DEMO_BALANCE;
+  const hit = d.done ? null : rules.stopAtProfitUsd && profit >= rules.stopAtProfitUsd ? "profit" : rules.stopAtLossUsd && profit <= -rules.stopAtLossUsd ? "loss" : null;
+  if (hit) {
+    for (const c of d.copies.filter((x) => x.stopped === null && !x.closed)) {
+      c.banked += c.amount * c.ret;
+      c.ret = 0;
+      c.closed = now;
+    }
+    const text =
+      hit === "profit"
+        ? `Profit target reached: +${money(profit)} since Start (your target was +${money(rules.stopAtProfitUsd!)}). Every copy closed; start again whenever you like.`
+        : `Loss limit reached: −${money(profit)} since Start (your limit was −${money(rules.stopAtLossUsd!)}). Every copy closed.`;
+    d.done = { at: now, text };
+    say(text);
+  }
+  if (opts.autopilot && !d.done && (!d.decisions?.length || now - d.decisions[0].at >= HOUR)) autopilotCheck(d, rules, value, now, say);
   if (!halted && value <= d.dayStartValue * (1 - rules.dailyLossPct)) {
     d.haltedDay = d.dayStart;
     say(`Daily loss limit (−${Math.round(rules.dailyLossPct * 100)}%) reached: copying paused until tomorrow.`);
+  } else if (!halted && !d.done && rules.dailyProfitUsd && value - d.dayStartValue >= rules.dailyProfitUsd) {
+    d.haltedDay = d.dayStart;
+    say(`Daily profit target reached (+${money(value - d.dayStartValue)} today, your target was +${money(rules.dailyProfitUsd)}): copying paused until tomorrow.`);
   }
   const last = d.curve.at(-1);
   if (!last || now - last[0] >= 30_000) d.curve.push([now, Math.round(value * 100) / 100]);
@@ -133,6 +157,38 @@ function autopilotSwap(d: DemoLive, c: DemoCopy, marks: Record<string, LiveMark>
   const text = `Autopilot: ${from} hit its stop-loss, so it moved the remaining ${money(rest)} to ${next}, the next best fit for your rules.`;
   say(text);
   d.autoNote = { at: now, text };
+  record(d, {
+    at: now,
+    by: "rules",
+    why: [`${from} hit its stop-loss (−${Math.round(rules.stopLossPct * 100)}%)`],
+    did: [`Move the remaining ${money(rest)} to ${next}, the next best fit for your rules`],
+    limits: "Same budget and the same rules: the money moved, nothing was added.",
+    changed: true,
+    strike: ["Demo: pretend money, so no real orders."],
+  });
+}
+
+const HOUR = 3_600_000;
+const record = (d: DemoLive, r: AutoDecision) => (d.decisions = [r, ...(d.decisions ?? [])].slice(0, 20));
+
+/** Autopilot's routine check in the demo (on switching it on, then hourly): every copy against its stop-loss, today against the daily limit. */
+function autopilotCheck(d: DemoLive, rules: AutoRules, value: number, now: number, say: (t: string) => void) {
+  const running = d.copies.filter((c) => c.stopped === null);
+  const worst = [...running].sort((a, b) => a.ret - b.ret)[0];
+  const today = d.dayStartValue ? value / d.dayStartValue - 1 : 0;
+  const pct = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(1)}%`;
+  record(d, {
+    at: now,
+    by: "rules",
+    why: [d.decisions?.length ? "Hourly check" : "You switched on Autopilot"],
+    did: ["Keep everything as it is"],
+    limits: [
+      worst ? `Every copy is inside its stop-loss (closest: ${worst.lead} at ${pct(worst.ret)}, stop at −${Math.round(rules.stopLossPct * 100)}%).` : "",
+      `Today ${pct(today)}, inside the −${Math.round(rules.dailyLossPct * 100)}% daily limit.`,
+    ].filter(Boolean).join(" "),
+    changed: false,
+  });
+  say("Autopilot checked your setup: everything is inside your rules.");
 }
 
 /** The dashboard's copies: each copy's profit, and the trader's open positions scaled to the copy. */

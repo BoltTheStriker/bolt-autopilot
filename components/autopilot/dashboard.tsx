@@ -3,7 +3,9 @@
 // Autopilot after setup: overview, traders, Earn (Strike's SLP vault and RealFi sUSDrf via Borrow & Earn), activity.
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import type { AutoCopy, AutoMe, AutoMode, SlpInfo } from "@/lib/autopilotApi";
+import type { AutoCopy, AutoDecision, AutoMe, AutoMode, SlpInfo } from "@/lib/autopilotApi";
+import { askConfirm } from "../Confirm";
+import { BoltRewards, EarnOptions, MoneyStrip } from "./EarnOptions";
 import { RealFiFlow, type RealFiActions } from "./RealFi";
 import { I, short, signed, Stat, time, usd } from "./steps";
 
@@ -28,17 +30,19 @@ export type BotView = {
   reserve: number; // money not in copies
   parked?: number; // left in ended copies' sub-accounts
   earn: { value: number; pnl: number } | null; // the user's SLP position
-  curve?: number[]; // demo: account value since the start
+  curve?: number[]; // demo: account value since the start; real: profit since the history starts
   startedAt?: number; // demo: when it started
   halted?: boolean;
   idle?: string | null; // real: the bot is on but copies nothing yet, and why (null: still looking)
   /** Autopilot mode: its latest action, the rules it runs with when they differ from the user's, its last check. */
-  autopilot?: { reason: string | null; rulesText: string | null; at: number | null; checkedAt: number | null };
+  autopilot?: { reason: string | null; rulesText: string | null; at: number | null; checkedAt: number | null; decisions?: AutoDecision[] };
   syncedAt?: number | null; // real: when the server last read the copies from Strike
   live?: boolean; // real: the copies were just read live from Strike
+  stopLossPct?: number; // the rules' stop-loss, for the health check
+  /** The user's whole-bot stop targets and the profit since Start they're measured on. */
+  targets?: { profit: number | null; loss: number | null; run: number };
+  today?: number | null; // profit today (UTC)
 };
-
-const STRIKE_VAULTS = "https://app.strikefinance.org/vaults";
 
 export function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
   return (
@@ -106,6 +110,7 @@ export function StatusCard({
             <span className={`size-2.5 rounded-full ${v.mode === "off" ? "bg-white/30" : v.halted ? "bg-gold" : "animate-pulse bg-mint"}`} />
             {title}
           </h2>
+          <HealthPill v={v} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {onDeposit && (
@@ -122,7 +127,7 @@ export function StatusCard({
           {v.demo ? (
             <MoreMenu
               items={[
-                ...(onRestart ? [{ label: "Restart from $1,000", onClick: () => confirm("Restart the demo from $1,000 with fresh picks?") && onRestart(), disabled: busy }] : []),
+                ...(onRestart ? [{ label: "Restart from $1,000", onClick: () => void askConfirm({ title: "Restart the demo?", body: "It starts again from $1,000 with fresh picks for your rules.", confirmLabel: "Restart" }).then((ok) => ok && onRestart()), disabled: busy }] : []),
                 { label: "Leave demo", onClick: onLeave },
               ]}
             />
@@ -137,7 +142,11 @@ export function StatusCard({
           ) : (
             <button
               disabled={busy}
-              onClick={() => (onStop ? onStop() : confirm("Stop the bot? Its copies are closed at market.") && onMode("off"))}
+              onClick={() =>
+                onStop
+                  ? onStop()
+                  : void askConfirm({ title: "Stop the bot?", body: v.demo ? "Every demo copy closes at its current result." : "Every copy closes at market price.", confirmLabel: "Stop the bot", danger: true }).then((ok) => ok && onMode("off"))
+              }
               className="rounded-full bg-neg/90 px-5 py-2 text-sm font-semibold text-white transition hover:bg-neg hover:shadow-[0_6px_24px_rgba(244,63,94,0.35)] active:scale-[0.97] disabled:opacity-50"
             >
               {busy ? <Spinning label="Stopping…" /> : "Stop the bot"}
@@ -167,6 +176,7 @@ export function StatusCard({
         </div>
         <Stat label={v.earn ? "In Earn (SLP)" : "Reserve"} value={usd(v.earn ? v.earn.value : v.reserve)} />
       </div>
+      {v.mode !== "off" && v.targets && (v.targets.profit || v.targets.loss) && <Targets t={v.targets} />}
       {v.mode !== "off" && (
         <div className="relative mt-4 flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-full bg-white/[0.05] p-1 text-xs">
@@ -201,6 +211,7 @@ export function StatusCard({
             {(v.autopilot.at || v.autopilot.checkedAt) && (
               <p className="mt-1 font-mono text-[10px] text-white/35">{v.autopilot.at ? `Changed ${time(v.autopilot.at)}` : ""}{v.autopilot.at && v.autopilot.checkedAt ? " · " : ""}{v.autopilot.checkedAt ? `Checked ${time(v.autopilot.checkedAt)}` : ""}</p>
             )}
+            <DecisionTrail decisions={v.autopilot.decisions ?? []} demo={v.demo} />
           </div>
         </div>
       )}
@@ -229,7 +240,7 @@ export function StatusCard({
         </div>
       )}
       {v.curve && v.curve.length > 1 ? (
-        <Curve values={v.curve} from={v.startedAt ? `${v.demo ? "Started" : "Since"} ${time(v.startedAt)}` : "Start"} />
+        <Curve values={v.curve} zero={v.demo ? undefined : 0} from={v.startedAt ? `${v.demo ? "Started" : "Since"} ${time(v.startedAt)}` : "Start"} />
       ) : !v.demo && v.mode !== "off" && v.copies.length ? (
         <p className="relative mt-5 rounded-xl bg-white/[0.03] px-3 py-3 text-xs text-muted">The profit chart fills in from here, with each update from Strike.</p>
       ) : v.demo ? (
@@ -248,6 +259,119 @@ export function StatusCard({
         </p>
       )}
     </section>
+  );
+}
+
+/** Progress toward the user's stop targets: since Start, the bot stops for good at either one. */
+function Targets({ t }: { t: NonNullable<BotView["targets"]> }) {
+  const share = t.run >= 0 ? (t.profit ? t.run / t.profit : 0) : t.loss ? -t.run / t.loss : 0;
+  return (
+    <div className="relative mt-3 rounded-xl bg-white/[0.03] px-3.5 py-2.5 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-soft">
+          Stops for good at {[t.profit ? <span key="p" className="font-mono text-mint">+{usd(t.profit)}</span> : null, t.loss ? <span key="l" className="font-mono text-neg">−{usd(t.loss)}</span> : null].filter(Boolean).reduce<React.ReactNode[]>((a, x, i) => (i ? [...a, " or ", x] : [x]), [])}{" "}
+          since Start
+        </span>
+        <span className={`font-mono ${t.run >= 0 ? "text-mint" : "text-neg"}`}>now {signed(t.run)}</span>
+      </div>
+      <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.06]">
+        <div className={`h-full rounded-full ${t.run >= 0 ? "bg-mint" : "bg-neg"}`} style={{ width: `${Math.min(100, Math.max(0, share * 100))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function useNow(ms: number) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
+}
+
+const ago = (ms: number) => (ms < 60_000 ? "just now" : `${Math.round(ms / 60_000)} min ago`);
+
+/** Healthy / Watch / Needs attention / Paused, with the reason, from what the bot already knows. */
+function health(v: BotView, now: number): { tone: "ok" | "warn" | "paused"; label: string; detail: string } | null {
+  if (v.mode === "off") return null;
+  if (v.halted) return { tone: "paused", label: "Paused", detail: "The daily loss limit was reached. Copying resumes tomorrow." };
+  if (!v.demo && v.idle) return /^(Paused|Weekend)/.test(v.idle) ? { tone: "paused", label: "Paused", detail: v.idle } : { tone: "warn", label: "Needs attention", detail: v.idle };
+  const age = !v.demo && v.syncedAt ? now - v.syncedAt : null;
+  if (age !== null && age > 10 * 60_000) return { tone: "warn", label: "Needs attention", detail: `No update from Strike for ${Math.round(age / 60_000)} minutes. The bot keeps retrying.` };
+  const stop = v.stopLossPct;
+  const near = stop ? v.copies.find((c) => !c.stopped && c.amount > 0 && c.pnl <= -0.6 * stop * c.amount) : undefined;
+  if (near) return { tone: "warn", label: "Watch", detail: `The copy of ${short(near.lead)} is near its stop-loss (${signed(near.pnl)} on ${usd(near.amount)}). ${v.demo ? "The stop-loss" : "Strike's stop-loss"} closes it there.` };
+  if (!v.demo && v.copies.length === 0) return null; // starting: the card below explains
+  return { tone: "ok", label: "Healthy", detail: `Every copy is inside your rules${age !== null ? `, synced with Strike ${ago(age)}` : ""}.` };
+}
+
+function HealthPill({ v }: { v: BotView }) {
+  const now = useNow(30_000);
+  const h = health(v, now);
+  if (!h) return null;
+  const tone = h.tone === "ok" ? "border-mint/30 bg-mint/10 text-mint" : h.tone === "warn" ? "border-gold/35 bg-gold/10 text-gold" : "border-white/15 bg-white/5 text-soft";
+  return (
+    <p className="mt-2 flex max-w-xl flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+      <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-semibold ${tone}`}>
+        <span className="size-1.5 rounded-full bg-current" />
+        {h.label}
+      </span>
+      <span className="text-muted">{h.detail}</span>
+    </p>
+  );
+}
+
+/** Autopilot's reviews as a trail: why it looked, what it decided (Claude or the rules), the limits check, what Strike did. */
+function DecisionTrail({ decisions, demo }: { decisions: AutoDecision[]; demo: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [pick, setPick] = useState(0);
+  if (!decisions.length) return null;
+  const d = decisions[Math.min(pick, decisions.length - 1)];
+  const steps = [
+    { label: "Why it looked", body: d.why.length ? d.why.join("; ") : "Routine check" },
+    {
+      label: d.by === "ai" ? "Decided by Claude" : "Decided by the rules",
+      body: `${d.did.join(". ")}.${d.note ? ` ${d.note}` : demo ? " In the demo the rules version decides; on a real account Autopilot asks Claude." : ""}`,
+    },
+    { label: "Limits check", body: d.limits },
+    { label: demo ? "Result" : "On Strike", body: d.strike?.length ? d.strike.join(" · ") : d.changed ? "Applied on the next sync with Strike." : "Nothing to change on Strike." },
+  ];
+  return (
+    <div className="mt-2.5">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="text-xs font-semibold text-mint underline-offset-2 hover:underline">
+        {open ? "Hide how it decided" : `How it decided · ${decisions.length} review${decisions.length > 1 ? "s" : ""}`}
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+            {decisions.length > 1 && (
+              <div className="mt-2.5 flex gap-1.5 overflow-x-auto [scrollbar-width:none]">
+                {decisions.slice(0, 8).map((x, i) => (
+                  <button
+                    key={`${x.at}-${i}`}
+                    onClick={() => setPick(i)}
+                    className={`shrink-0 rounded-full px-2.5 py-1 font-mono text-[10px] transition ${i === pick ? "bg-mint text-ink" : "bg-white/[0.06] text-soft hover:text-white"}`}
+                  >
+                    {time(x.at)}
+                    {x.changed ? " · change" : ""}
+                  </button>
+                ))}
+              </div>
+            )}
+            <ol className="mt-3 space-y-2.5 border-l border-mint/25 pl-4">
+              {steps.map((s) => (
+                <li key={s.label} className="relative">
+                  <span className="absolute top-1.5 -left-[21.5px] size-2 rounded-full bg-mint" />
+                  <p className="font-mono text-[10px] tracking-wide text-white/40 uppercase">{s.label}</p>
+                  <p className="text-sm text-soft">{s.body}</p>
+                </li>
+              ))}
+            </ol>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -320,14 +444,15 @@ function MoreMenu({ items }: { items: { label: string; onClick: () => void; disa
   );
 }
 
-function Curve({ values, from }: { values: number[]; from: string }) {
+/** zero: the break-even value (real accounts chart profit, so 0); without it, the first point (the demo's starting balance). */
+function Curve({ values, from, zero }: { values: number[]; from: string; zero?: number }) {
   // At least ±0.5% of the starting value, so a few cents don't look like a rally.
   const pad = Math.abs(values[0]) * 0.005;
   const min = Math.min(...values, values[0] - pad);
   const max = Math.max(...values, values[0] + pad);
   const span = max - min || 1;
   const pts = values.map((v, i) => `${(i / (values.length - 1)) * 100},${36 - ((v - min) / span) * 32}`);
-  const up = values.at(-1)! >= values[0];
+  const up = values.at(-1)! >= (zero ?? values[0]); // green while in profit, even if below where the chart starts
   const color = up ? "#4efab0" : "#f43f5e";
   return (
     <div className="relative mt-5">
@@ -441,76 +566,42 @@ export function Activity({ v, limit }: { v: BotView; limit?: number }) {
   );
 }
 
-/** Earn: Strike's SLP vault, and RealFi's sUSDrf through Strike's Borrow & Earn. Deposits happen on Strike
- *  (its API has no vault deposits); Bolt shows the numbers and tracks your SLP position. */
+/** Earn: where the user's money is (in copies, idle, earning), the ways to earn on Strike (SLP vault, RealFi's sUSDrf
+ *  through Borrow & Earn, STRIKE staking), RealFi's steps, and $BOLT holder rewards. Deposits happen on Strike's pages
+ *  (its API has no vault deposits for builders); Bolt shows live numbers and tracks the user's positions. */
 export function EarnPanel({ v, slp, realfi, actions }: { v: BotView; slp: SlpInfo | null; realfi?: AutoMe["realfi"]; actions?: RealFiActions | null }) {
-  const month = slp ? (Math.max(0, v.reserve) * slp.apr) / 12 : 0;
+  const working = v.copies.filter((c) => !c.stopped).reduce((t, c) => t + c.amount, 0);
+  const pledgedUsd = (realfi?.pledged ?? 0) * (slp?.susdrf?.price ?? 1);
   return (
     <div className="space-y-4" data-tour="earn">
       <section className="card relative overflow-hidden rounded-3xl p-6 sm:p-8">
         <div className="pointer-events-none absolute -top-28 -right-24 h-80 w-80 rounded-full bg-mint/12 blur-[110px]" />
-        <div className="relative grid gap-8 lg:grid-cols-[1.2fr_1fr] lg:items-center">
+        <div className="relative grid gap-8 lg:grid-cols-[1.1fr_1fr] lg:items-center">
           <div>
             <p className="font-mono text-xs tracking-wider text-mint uppercase">Earn on Strike</p>
-            <h2 className="mt-2 font-display text-3xl font-bold tracking-tight">Money that isn&apos;t trading can still earn.</h2>
+            <h2 className="mt-2 font-display text-3xl font-bold tracking-tight">Copies make your money trade. Earn puts the rest to work.</h2>
             <p className="mt-3 text-sm leading-relaxed text-muted">
-              The bot keeps part of your budget in reserve. Strike&apos;s own vault, SLP, puts dollars to work by making markets on Strike, and it&apos;s where Borrow &amp; Earn sends credit backed by
-              RealFi&apos;s sUSDrf.
+              The bot keeps part of your budget out of copies. That money can earn on Strike: in its vault, through RealFi&apos;s dollar, or by staking STRIKE.
             </p>
+            {v.earn && (
+              <p className="mt-3 text-sm text-soft">
+                You have <span className="font-mono text-white">{usd(v.earn.value)}</span> in Strike&apos;s vault, <span className={v.earn.pnl >= 0 ? "text-mint" : "text-neg"}>{signed(v.earn.pnl)}</span> so far.
+              </p>
+            )}
           </div>
-          <div className="rounded-2xl border border-mint/25 bg-mint/[0.05] p-5">
-            <p className="text-xs text-muted">{slp?.name ?? "Strike Liquidity Provider (SLP)"}</p>
-            <p className="mt-1 font-mono text-5xl text-mint">{slp ? `${(slp.apr * 100).toFixed(1)}%` : "—"}</p>
-            <p className="text-xs text-muted">APR today, from Strike&apos;s API</p>
-            <div className="mt-4 grid grid-cols-3 gap-2 text-center text-xs">
-              <div className="rounded-xl bg-white/[0.04] py-2">
-                <p className="font-mono text-sm text-white">{slp ? `$${(slp.equity / 1e6).toFixed(2)}M` : "—"}</p>
-                <p className="text-muted">in vault</p>
-              </div>
-              <div className="rounded-xl bg-white/[0.04] py-2">
-                <p className="font-mono text-sm text-white">{slp ? `${slp.lockupDays} day` : "—"}</p>
-                <p className="text-muted">lockup</p>
-              </div>
-              <div className="rounded-xl bg-white/[0.04] py-2">
-                <p className="font-mono text-sm text-white">{slp ? `${slp.feeBps / 100}%` : "—"}</p>
-                <p className="text-muted">vault fee</p>
-              </div>
-            </div>
-          </div>
+          <MoneyStrip demo={v.demo} working={working} idle={Math.max(0, v.reserve)} earning={(v.earn?.value ?? 0) + pledgedUsd} slp={slp} />
         </div>
       </section>
 
+      <EarnOptions slp={slp} hasSlp={!!v.earn} />
+
       <RealFiFlow slp={slp} realfi={realfi ?? null} actions={actions ?? null} />
 
-      <div className="grid gap-4">
-        <section className="card rounded-3xl p-6">
-          <span className="grid size-10 place-items-center rounded-2xl bg-mint text-ink">{I.coin}</span>
-          <h3 className="mt-4 font-display text-xl font-semibold">Your reserve in SLP</h3>
-          {v.earn ? (
-            <p className="mt-2 text-sm text-muted">
-              You have <span className="font-mono text-white">{usd(v.earn.value)}</span> in SLP, <span className={v.earn.pnl >= 0 ? "text-mint" : "text-neg"}>{signed(v.earn.pnl)}</span> so far.
-            </p>
-          ) : (
-            <p className="mt-2 text-sm text-muted">
-              {v.reserve >= 1 ? (
-                <>
-                  Your <span className="font-mono text-white">{usd(v.reserve)}</span> reserve{slp ? <> could earn about <span className="text-mint">{usd(month)} a month</span> at today&apos;s APR</> : " could earn here"}. Minimum deposit ${slp?.minDeposit ?? 100}.
-                </>
-              ) : (
-                "Your whole budget is in copies right now. Anything you keep aside can go here."
-              )}
-            </p>
-          )}
-          <a href={STRIKE_VAULTS} target="_blank" rel="noreferrer" className="mt-5 inline-flex items-center gap-2 rounded-full bg-mint px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-mint-2">
-            Deposit in SLP on Strike ↗
-          </a>
-        </section>
-
-      </div>
+      <BoltRewards address={v.demo ? undefined : v.address} />
 
       <p className="px-1 text-[11px] leading-relaxed text-white/40">
-        APR is variable and past returns don&apos;t promise future ones. SLP trades against the market and can lose money. Putting your trading balance straight into SLP
-        happens on Strike for now; once you&apos;re connected, Bolt tracks your SLP position here. Bolt isn&apos;t affiliated with Strike or RealFi.
+        Rates are variable and past returns don&apos;t promise future ones. Deposits into Strike&apos;s vault, Borrow &amp; Earn and staking happen on Strike&apos;s own pages; once you&apos;re connected, Bolt
+        tracks your vault and RealFi positions here. Bolt isn&apos;t affiliated with Strike or RealFi.
       </p>
     </div>
   );

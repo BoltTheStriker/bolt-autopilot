@@ -6,6 +6,7 @@
 import { useState } from "react";
 import type { AutoMe, SlpInfo } from "@/lib/autopilotApi";
 import type { InstalledWallet } from "@/lib/wallet";
+import { STRIKE_PAGES } from "./EarnOptions";
 import { usd } from "./steps";
 
 export const SUSDRF_UNIT = "7d9e4a0ee1a3f5d5ff8159ea91a83310cf2795ee7a87170c7aea05ae7355534472"; // on-chain name "sUSDr"
@@ -43,7 +44,7 @@ export function RealFiFlow({ slp, realfi, actions }: { slp: SlpInfo | null; real
   };
 
   return (
-    <section className="card relative overflow-hidden rounded-[2rem] border border-mint/20 p-6 sm:p-8" data-tour="realfi">
+    <section id="realfi" className="card relative scroll-mt-28 overflow-hidden rounded-[2rem] border border-mint/20 p-6 sm:p-8" data-tour="realfi">
       <div className="pointer-events-none absolute -top-28 -left-24 h-80 w-80 rounded-full bg-mint/10 blur-[110px]" />
       <div className="relative flex flex-wrap items-end justify-between gap-6">
         <div className="max-w-xl">
@@ -70,7 +71,6 @@ export function RealFiFlow({ slp, realfi, actions }: { slp: SlpInfo | null; real
           <a href={SUNDAE} target="_blank" rel="noreferrer" className="glass inline-flex rounded-full px-4 py-2 text-xs font-semibold hover:bg-white/10">
             Open SundaeSwap ↗
           </a>
-          <p className="mt-2 text-[10px] text-white/35">In-app swap coming next.</p>
         </Step>
 
         <Step n={2} title="Deposit to Strike" body="One signature moves sUSDrf from your wallet to your Strike account.">
@@ -119,8 +119,10 @@ export function RealFiFlow({ slp, realfi, actions }: { slp: SlpInfo | null; real
           )}
         </Step>
 
-        <Step n={3} title="Pledge & earn" body="One tap: pledge your sUSDrf and its credit goes into SLP.">
-          <span className="inline-flex rounded-full border border-gold/40 px-2.5 py-1 text-[11px] text-gold">Soon: waiting on Strike&apos;s go-ahead</span>
+        <Step n={3} title="Pledge & earn" body="Pledge your sUSDrf in Strike's Borrow & Earn; the credit it backs goes into SLP.">
+          <a href={STRIKE_PAGES.borrowEarn} target="_blank" rel="noreferrer" className="inline-flex rounded-full bg-mint px-4 py-2 text-xs font-semibold text-ink transition hover:bg-mint-2 active:scale-[0.97]">
+            Pledge on Strike ↗
+          </a>
         </Step>
 
         <Step n={4} title="Withdraw anytime" body="Your balance or your sUSDrf back to your wallet, right from Bolt.">

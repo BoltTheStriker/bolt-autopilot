@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AutoMode } from "@/lib/autopilotApi";
 import type { InstalledWallet } from "@/lib/wallet";
 import { replayWeek, type Replay } from "@/lib/rulesReplay";
-import { describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Markets, type PreviewTrader, type Risk } from "@/worker/autopilot";
+import { boostOf, describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Markets, type PreviewTrader, type Risk } from "@/worker/autopilot";
 import { MoneyPath } from "./strike";
 import { ChoiceCards, Slider, type TourStep } from "./ui";
 
@@ -221,6 +221,34 @@ export function DepositPending({ amount, asset, txHash, onContinue }: { amount: 
   );
 }
 
+/** An optional whole-bot target in dollars: empty = off. */
+function TargetField({ label, sign, value, placeholder, onChange }: { label: string; sign: string; value: number | null; placeholder: string; onChange: (v: number | null) => void }) {
+  const [text, setText] = useState(value === null ? "" : String(value));
+  // The copilot can set it too: follow the value when it changes from outside.
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    setText(value === null ? "" : String(value));
+  }
+  return (
+    <label className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-sm">
+      <span className="text-soft">{label}</span>
+      <span className="flex shrink-0 items-center gap-1 font-mono">
+        <span className="whitespace-nowrap text-muted">{sign}$</span>
+        <input
+          inputMode="decimal"
+          value={text}
+          placeholder={placeholder}
+          onChange={(e) => setText(e.target.value)}
+          onBlur={() => onChange(Number(text) >= 1 ? Number(text) : null)}
+          aria-label={label}
+          className="w-20 rounded-lg border border-white/10 bg-ink/40 px-2 py-1 text-right outline-none placeholder:text-white/25 focus:border-mint/50"
+        />
+      </span>
+    </label>
+  );
+}
+
 export function RulesCard({
   initial,
   maxBudget,
@@ -251,6 +279,7 @@ export function RulesCard({
   const [r, setR] = useState<AutoRules>({ ...initial, budgetUsd: Math.min(initial.budgetUsd, maxBudget) });
   useEffect(() => onChange?.(r), [r, onChange]);
   const [advanced, setAdvanced] = useState(false);
+  const [openedAt] = useState(() => Date.now()); // for "paused until": the time the form opened is close enough
   const level = RISK_LEVELS[r.risk];
   const set = (patch: Partial<AutoRules>) => setR((x) => sanitizeRules({ ...x, ...patch }, maxBudget) ?? x);
   // Changing risk resets the limits to that level's defaults (they can only be tightened from there).
@@ -287,6 +316,31 @@ export function RulesCard({
           <Slider label="Budget for the bot" value={r.budgetUsd} min={50} max={maxBudget} step={10} format={(v) => `$${v.toFixed(0)}`} hint={budgetHint ?? `Beta limit $${maxBudget.toFixed(0)}`} onChange={(budgetUsd) => set({ budgetUsd })} />
           <Slider label="Traders to copy" value={r.traders} min={1} max={6} step={1} format={(v) => String(v)} hint="More traders = smoother, smaller copies" onChange={(traders) => set({ traders })} />
         </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <TargetField label="Stop when I'm up" sign="+" value={r.stopAtProfitUsd ?? null} placeholder="20" onChange={(stopAtProfitUsd) => set({ stopAtProfitUsd })} />
+          <TargetField label="Stop if I'm down" sign="−" value={r.stopAtLossUsd ?? null} placeholder="30" onChange={(stopAtLossUsd) => set({ stopAtLossUsd })} />
+          <p className="text-[11px] text-white/40 sm:col-span-2">Optional. Counted since you press Start, across every copy; the bot then closes its copies and switches off until you start it again.</p>
+        </div>
+        {r.pauseUntil && r.pauseUntil > openedAt && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gold/30 bg-gold/[0.06] px-3.5 py-2.5 text-sm">
+            <span className="text-soft">Paused until {new Date(r.pauseUntil).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+            <button onClick={() => set({ pauseUntil: null })} className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold hover:bg-white/15">
+              Resume now
+            </button>
+          </div>
+        )}
+        {!!r.avoid?.length && (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-sm">
+            <p className="text-soft">Never copy</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {r.avoid.map((a) => (
+                <button key={a} onClick={() => set({ avoid: r.avoid!.filter((x) => x !== a) })} title="Copy this trader again" className="rounded-full bg-white/[0.06] px-2.5 py-1 font-mono text-[11px] text-soft hover:bg-white/10 hover:text-white">
+                  {a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a} ✕
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div>
           <button onClick={() => setAdvanced((a) => !a)} className="text-sm text-mint hover:underline">{advanced ? "Hide" : "Show"} advanced limits</button>
           {advanced && (
@@ -304,6 +358,32 @@ export function RulesCard({
                     <Slider label="Bank a copy at" value={r.profitLockPct} min={0.05} max={0.5} step={0.01} format={(v) => `+${Math.round(v * 100)}%`} onChange={(profitLockPct) => set({ profitLockPct })} />
                   </div>
                 )}
+              </div>
+              <div>
+                <p className="flex items-center justify-between text-sm">
+                  <span className="text-soft">Copy size (boost)</span>
+                  <span className="font-mono text-xs text-muted">up to {level.maxBoost}× on {r.risk} risk</span>
+                </p>
+                <div className="mt-2 inline-flex rounded-full bg-white/[0.05] p-1 text-xs">
+                  {[1, 2, 3].map((b) => (
+                    <button
+                      key={b}
+                      disabled={b > level.maxBoost}
+                      onClick={() => set({ boost: b })}
+                      className={`rounded-full px-3.5 py-1.5 font-semibold transition disabled:opacity-30 ${boostOf(r) === b ? "bg-mint text-ink" : "text-soft hover:text-white"}`}
+                    >
+                      {b}×
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1.5 text-[11px] text-white/40">2× trades twice the trader&apos;s size for its money: gains and losses both double. The stop-loss still caps each copy.</p>
+              </div>
+              <div className="space-y-3">
+                <TargetField label="Stop the day when up" sign="+" value={r.dailyProfitUsd ?? null} placeholder="10" onChange={(dailyProfitUsd) => set({ dailyProfitUsd })} />
+                <label className="flex items-center justify-between text-sm">
+                  <span className="text-soft">Weekdays only (no copies on weekends)</span>
+                  <input type="checkbox" checked={!!r.weekdaysOnly} onChange={(e) => set({ weekdaysOnly: e.target.checked })} className="size-4 accent-[#4efab0]" />
+                </label>
               </div>
             </div>
           )}

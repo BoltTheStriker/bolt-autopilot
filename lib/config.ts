@@ -59,7 +59,7 @@ export const site = {
   /** Autopilot teaser: its landing page is public, but the app, demo and impact page stay locked ("Opening soon")
    *  for everyone except a verified admin, until the worker says Autopilot is open. */
   autopilotTeaser: true,
-  botApi: process.env.NEXT_PUBLIC_BOT_API || "https://bolt-worker-production.up.railway.app", // env override for local testing
+  botApi: process.env.NEXT_PUBLIC_BOT_API || "https://api.boltstriker.io", // env override for local testing
 
   socials: {
     x: "https://x.com/bolthestriker",

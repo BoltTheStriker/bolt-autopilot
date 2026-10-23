@@ -5,7 +5,7 @@
 //   - dropping traders the user is copying right now (the engine then picks the next best fit).
 // It never touches withdrawals, deposits or anything outside the copy settings.
 import type Anthropic from "@anthropic-ai/sdk";
-import { describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Risk } from "./autopilot.ts";
+import { boostOf, describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Risk } from "./autopilot.ts";
 
 export const AUTOTUNE_MODEL = "claude-opus-5-5";
 const RISKS: Risk[] = ["low", "medium", "high"];
@@ -19,17 +19,22 @@ const MAX_REVIEWS_PER_DAY = 8;
 /** What Autopilot changed: the rules it runs with now, and why. Absent: the user's own rules. */
 export type Tuned = { rules: AutoRules; at: number; reason: string };
 export type Drops = Record<string, { until: number; reason: string }>; // lowercased lead →
-export type AutotuneState = { tuned?: Tuned; drops?: Drops; reviewedAt?: number; reviews?: { day: string; n: number } };
+/** One review, as the user sees it: what prompted it, who decided, what changed, the limits check, and what Strike then did. */
+export type DecisionRecord = { at: number; by: "ai" | "rules"; note?: string; why: string[]; did: string[]; limits: string; changed: boolean; strike?: string[] };
+export type AutotuneState = { tuned?: Tuned; drops?: Drops; reviewedAt?: number; reviews?: { day: string; n: number }; decisions?: DecisionRecord[] };
 
 /** A trader as the review sees them (from the bot's ranking). */
 export type TraderStats = { lead: string; score: number; dd: number; roi7d: number; roi30d: number; realWorldShare: number };
 export type CopyNow = { lead: string; amount: number; pnl: number };
 export type Signal = { kind: "daily" | "out_of_ranking" | "losing_copy" | "near_daily_limit"; lead?: string; detail: string };
-export type Decision = { rules: AutoRules | null; drop: { lead: string; reason: string }[]; summary: string; by: "ai" | "rules" };
+export type Decision = { rules: AutoRules | null; drop: { lead: string; reason: string }[]; summary: string; by: "ai" | "rules"; note?: string };
 
 const lc = (s: string) => s.toLowerCase();
 const short = (a: string) => (a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a);
 const today = (now: number) => new Date(now).toISOString().slice(0, 10);
+
+/** Rule fields only the user sets (Autopilot's decision tool doesn't carry them; withinLimits keeps the user's). */
+const USERS_OWN = new Set<keyof AutoRules>(["stopAtProfitUsd", "stopAtLossUsd", "boost", "dailyProfitUsd", "pauseUntil", "weekdaysOnly", "avoid"]);
 
 /** The user's limits applied to proposed rules: anything looser is pulled back to what they chose.
  *  Profit lock and the number of traders are free (banking gains and spreading out never add risk). */
@@ -46,6 +51,15 @@ export function withinLimits(p: AutoRules, limit: AutoRules): AutoRules {
     stopLossPct: Math.min(p.stopLossPct, limit.stopLossPct, level.stopLossPct),
     profitLockPct: p.profitLockPct,
     dailyLossPct: Math.min(p.dailyLossPct, limit.dailyLossPct, level.dailyLossPct),
+    // Copy size: never above the user's own (Autopilot may only step it down).
+    ...(p.boost || limit.boost ? { boost: Math.min(p.boost ?? boostOf(limit), boostOf(limit)) } : {}),
+    // The user's own targets, schedule and blocked traders, untouched: Autopilot never moves them.
+    ...(limit.stopAtProfitUsd ? { stopAtProfitUsd: limit.stopAtProfitUsd } : {}),
+    ...(limit.stopAtLossUsd ? { stopAtLossUsd: limit.stopAtLossUsd } : {}),
+    ...(limit.dailyProfitUsd ? { dailyProfitUsd: limit.dailyProfitUsd } : {}),
+    ...(limit.pauseUntil ? { pauseUntil: limit.pauseUntil } : {}),
+    ...(limit.weekdaysOnly ? { weekdaysOnly: true } : {}),
+    ...(limit.avoid?.length ? { avoid: limit.avoid } : {}),
   };
 }
 
@@ -118,6 +132,8 @@ You can:
 - stop copying traders the user copies now (the bot then copies the next best fit from its ranking), when there's a clear reason: they left the ranking, they are near their stop-loss with a poor recent week, or their trading no longer fits the user's goal,
 - change the rules within the user's limits: a lower risk level, less leverage, a tighter stop-loss or daily limit, a smaller budget at work, calmer picks (steady), narrower markets, more or fewer traders, a profit lock; or move back toward the user's own settings when things are calm.
 
+Always answer by calling autopilot_decision exactly once, even when nothing needs changing.
+
 Principles: protect the user's money first; prefer the smallest change that fixes the problem; never promise returns. Decide with the numbers given; never invent any. The summary is shown to the user in their activity feed: one or two plain sentences saying what you changed and why (or that nothing needed changing), without markdown.`;
 
 const DECIDE: Anthropic.Beta.BetaTool = {
@@ -155,7 +171,8 @@ const DECIDE: Anthropic.Beta.BetaTool = {
   },
 };
 
-/** Claude's decision for one review. Throws on any API trouble (the caller falls back to rulesDecision). */
+/** Claude's decision for one review. Throws on any API trouble (the caller falls back to rulesDecision).
+ *  Opus 5.5 rejects a forced tool_choice, so the prompt asks for the call and a reply without one is asked again once. */
 export async function aiDecision(
   client: Pick<Anthropic, "beta">,
   u: { rules: AutoRules | null } & AutotuneState,
@@ -172,19 +189,25 @@ export async function aiDecision(
     next_best_traders: ctx.candidates.slice(0, 8),
     min_copy_usd: MIN_COPY_USD,
   };
-  const res = await client.beta.messages.create({
-    model: AUTOTUNE_MODEL,
-    max_tokens: 2_000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    output_config: { effort: "medium" },
-    system: SYSTEM,
-    tools: [DECIDE],
-    tool_choice: { type: "tool", name: DECIDE.name },
-    messages: [{ role: "user", content: `Review this bot now:\n${JSON.stringify(state)}` }],
-  });
-  const call = res.content.find((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use" && b.name === DECIDE.name);
-  if (!call) throw new Error(`no decision (${res.stop_reason})`);
+  let call: Anthropic.Beta.BetaToolUseBlock | undefined;
+  let stop: string | null = null;
+  for (let attempt = 0; attempt < 2 && !call; attempt++) {
+    const res = await client.beta.messages.create({
+      model: AUTOTUNE_MODEL,
+      max_tokens: 2_000,
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+      output_config: { effort: "medium" },
+      system: SYSTEM,
+      tools: [DECIDE],
+      tool_choice: { type: "auto", disable_parallel_tool_use: true },
+      messages: [{ role: "user", content: `Review this bot now and record your decision with autopilot_decision:\n${JSON.stringify(state)}` }],
+    });
+    call = res.content.find((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use" && b.name === DECIDE.name);
+    stop = res.stop_reason;
+    if (stop === "refusal") break;
+  }
+  if (!call) throw new Error(`no decision (${stop})`);
   const x = call.input as { change_rules: boolean; rules: unknown; drop: { lead: string; reason: string }[]; summary: string };
   return {
     rules: x.change_rules ? sanitizeRules(x.rules, limit.budgetUsd) : null,
@@ -196,7 +219,7 @@ export async function aiDecision(
 
 /** Apply a decision, checked: rules pulled inside the user's limits, drops only for traders being
  *  copied now (at most all but one per review). Returns the line for the activity feed, or null. */
-export function applyDecision(u: { rules: AutoRules | null } & AutotuneState, d: Decision, now: number, copying: string[]): string | null {
+export function applyDecision(u: { rules: AutoRules | null } & AutotuneState, d: Decision, now: number, copying: string[], why: string[] = []): string | null {
   const limit = u.rules;
   if (!limit) return null;
   const held = new Set(copying.map(lc));
@@ -204,15 +227,35 @@ export function applyDecision(u: { rules: AutoRules | null } & AutotuneState, d:
   u.drops = Object.fromEntries(Object.entries(u.drops ?? {}).filter(([, v]) => v.until > now));
   for (const x of drops) u.drops[lc(x.lead)] = { until: now + DROP_MS, reason: x.reason.slice(0, 200) };
   let changed = drops.length > 0;
+  const did = drops.map((x) => `Stop copying ${short(x.lead)}: ${x.reason}`);
+  let clamped = 0;
   if (d.rules) {
     const next = withinLimits(d.rules, limit);
+    const chosen = (Object.keys(next) as (keyof AutoRules)[]).filter((k) => !USERS_OWN.has(k)); // not Autopilot's to choose
+    clamped = chosen.filter((k) => JSON.stringify(next[k]) !== JSON.stringify(d.rules![k])).length;
     const before = u.tuned ? withinLimits(u.tuned.rules, limit) : limit;
     if (describeRules(next) !== describeRules(before)) {
       changed = true;
       if (describeRules(next) === describeRules(limit)) delete u.tuned;
       else u.tuned = { rules: next, at: now, reason: d.summary };
+      did.push(u.tuned ? `Run with: ${describeRules(next)}` : "Back to your own rules");
     }
   }
+  const skipped = d.drop.length - drops.length;
+  const checks = [
+    clamped ? `pulled ${clamped} setting${clamped > 1 ? "s" : ""} back inside your limits` : "",
+    skipped ? `skipped ${skipped} stop${skipped > 1 ? "s" : ""} (a trader not copied now, or the last copy)` : "",
+  ].filter(Boolean);
+  const record: DecisionRecord = {
+    at: now,
+    by: d.by,
+    ...(d.note ? { note: d.note } : {}),
+    why,
+    did: did.length ? did : ["Keep everything as it is"],
+    limits: checks.length ? `Validator ${checks.join("; ")}.` : "Everything stays inside your limits.",
+    changed,
+  };
+  u.decisions = [record, ...(u.decisions ?? [])].slice(0, 30);
   u.reviewedAt = now;
   const day = today(now);
   u.reviews = u.reviews?.day === day ? { day, n: u.reviews.n + 1 } : { day, n: 1 };

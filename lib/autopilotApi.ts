@@ -5,6 +5,8 @@ import type { AutoRules, LiveMark, PreviewTrader } from "@/worker/autopilot";
 
 export type AutoMode = "off" | "on" | "autopilot";
 export type AutoCopy = { lead: string; amount: number; pnl: number; isolated?: boolean; positions: { market: string; long: boolean; pnl?: number }[] };
+/** One Autopilot review: what prompted it, who decided, what changed, the limits check, what Strike then did. */
+export type AutoDecision = { at: number; by: "ai" | "rules"; note?: string; why: string[]; did: string[]; limits: string; changed: boolean; strike?: string[] };
 export type AutoUserView = {
   address: string;
   accountId: string;
@@ -19,6 +21,8 @@ export type AutoUserView = {
   idle?: string | null; // why the bot is on but copies nothing yet
   autopilot?: { rulesText: string; reason: string; at: number } | null; // what Autopilot runs with, when it changed something
   reviewedAt?: number | null; // Autopilot's last check
+  decisions?: AutoDecision[]; // Autopilot's latest reviews, newest first
+  run?: { since: number; closed: number } | null; // since Start: the profit of copies that already ended (for the stop targets)
   history?: { at: number; pnl: number; working: number }[]; // profit on the running copies at each sync
   liveAt?: number | null; // set when `copies` were just read live from Strike (not the last sync)
 };
@@ -50,7 +54,17 @@ export type SlpInfo = {
 export type WithdrawQuote = { withdrawId: string; fee: number; messageToSign: string; txCbor: string | null };
 export type AutoStatus = { open: boolean; ready?: boolean; network: "testnet" | "mainnet"; maxBudgetUsd: number; traders: number; copilot?: boolean };
 /** What the copilot sees of the app (it can only propose; the user applies). */
-export type CopilotContext = { demo: boolean; rules: AutoRules | null; balance: number | null; copies: { lead: string; amount: number; pnl: number }[] };
+export type CopilotContext = {
+  demo: boolean;
+  rules: AutoRules | null;
+  balance: number | null;
+  copies: { lead: string; amount: number; pnl: number }[];
+  mode?: AutoMode | null;
+  sinceStart?: number | null; // profit since Start
+  today?: number | null; // profit today (UTC)
+};
+/** A one-tap action the copilot can offer. */
+export type CopilotAction = "start" | "stop" | "autopilot" | "follow_rules";
 
 const SESSION = "bolt-autopilot-session"; // per-viewer convenience: stay signed in on this browser
 
@@ -95,7 +109,7 @@ export const autopilot = {
   earn: () => call<{ slp: SlpInfo }>("earn"),
   marks: () => call<{ at: number; marks: Record<string, LiveMark> }>("marks"),
   copilot: (messages: { role: "user" | "assistant"; text: string }[], context: CopilotContext) =>
-    call<{ reply: string; proposal: AutoRules | null; proposalText: string | null }>("copilot", { messages, context }),
+    call<{ reply: string; proposal: AutoRules | null; proposalText: string | null; action?: CopilotAction | null }>("copilot", { messages, context }),
   // In private beta the server only lets an admin start a connect: send this browser's admin key if it has one.
   connectStart: (address: string, adminKey?: string) => call<{ nonce: string; message: string }>("connect/start", { address }, adminKey ? { "x-admin-key": adminKey } : {}),
   connectFinish: (nonce: string, signature: string, key: string) => call<{ token: string; user: AutoUserView }>("connect/finish", { nonce, signature, key }),

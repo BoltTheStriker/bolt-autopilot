@@ -1,0 +1,46 @@
+# Bolt on your own server: the worker (live bot, holder demo, Bot Cup, Autopilot, copilot) behind Caddy,
+# which gets and renews the HTTPS certificate for api.boltstriker.io by itself.
+#   cd /srv/bolt/app && docker compose -f deploy/docker-compose.yml up -d --build
+services:
+  bolt-worker:
+    build:
+      context: ..
+      dockerfile: worker/Dockerfile
+    restart: unless-stopped
+    env_file: /srv/bolt/bolt-worker.env # secrets live only on the server (chmod 600), never in git
+    environment:
+      PORT: "8080"
+      DATA_DIR: /data
+    volumes:
+      - /srv/bolt/data:/data # bot state, Autopilot users (keys encrypted), history: backed up nightly
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  caddy:
+    image: caddy:2.8.4
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - bolt-worker
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}

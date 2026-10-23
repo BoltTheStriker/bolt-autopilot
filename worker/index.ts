@@ -17,7 +17,7 @@ import { applySettings, DEFAULT_SETTINGS, describeSettings, indexStep, sanitizeS
 import { StrikeClient } from "./strike-live.ts";
 import { CUP_MIN_HOLDING, cupStandings, cupToCheck, freshJoinTime, joinCup, joinMessage, oldJoinMessage, resetBlocked, resetMessage, snapshotCup } from "./cup.ts";
 import { verifySignData } from "./cose.ts";
-import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, MIN_COPY_USD, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
+import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, MIN_COPY_USD, pausedNow, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
 import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, newSession, publicUser, saveAutoStore, type AutoUser, type Mode } from "./autopilotStore.ts";
 import { copiesNow, parkedOf, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
@@ -634,10 +634,11 @@ async function autopilotReview(u: AutoUser, now: number): Promise<boolean> {
       decision = await aiDecision(copilotClient, u, { signals, copies, dayLossUsd, held, candidates });
     } catch (e) {
       log("autopilot review: Claude unavailable, rules version used:", e instanceof Error ? e.message : e);
+      decision.note = "Claude was unavailable, so the plain-rules version decided.";
     }
   }
   const before = JSON.stringify([effectiveRules(u), [...droppedLeads(u, now)]]);
-  const line = applyDecision(u, decision, now, copies.map((c) => c.lead));
+  const line = applyDecision(u, decision, now, copies.map((c) => c.lead), signals.map((s) => s.detail));
   if (line) logUser(u, now, line);
   return JSON.stringify([effectiveRules(u), [...droppedLeads(u, now)]]) !== before;
 }
@@ -645,6 +646,10 @@ async function autopilotReview(u: AutoUser, now: number): Promise<boolean> {
 function idleReason(u: AutoUser): string | null {
   const rules = effectiveRules(u);
   if (!rules || u.mode === "off" || Object.keys(u.managed).length) return null;
+  // The user's own pauses first: nothing is wrong, the bot is waiting as asked.
+  const pause = pausedNow(rules, Date.now());
+  if (pause) return `${pause}.`;
+  if (u.haltedDay === new Date().toISOString().slice(0, 10)) return "Paused for today: a daily limit or target was reached. Copying picks up again tomorrow (UTC).";
   if (!autoPool.length) return "Loading Strike's trader rankings. Your copies start in a few minutes.";
   const deployed = rules.budgetUsd * RISK_LEVELS[rules.risk].deploy;
   if (deployed < MIN_COPY_USD)
@@ -671,7 +676,13 @@ async function syncAutopilot(only?: AutoUser) {
       if (autoPool.length) {
         await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
         // Autopilot mode: review when something calls for it; a change takes effect right away.
-        if (u.mode === "autopilot" && (await autopilotReview(u, Date.now()))) await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
+        if (u.mode === "autopilot" && (await autopilotReview(u, Date.now()))) {
+          const t = Date.now();
+          await syncUser(u, autoClient(u), autoSpecs(u), t);
+          // The decision's result on Strike: what that sync did (stopped and started copies, or Strike's refusals).
+          const rec = u.decisions?.[0];
+          if (rec) rec.strike = u.log.filter((l) => l.at >= t).map((l) => l.text).reverse().slice(0, 6);
+        }
       }
       const idle = idleReason(u);
       if (idle && idle !== u.idle) logUser(u, Date.now(), idle);
@@ -761,7 +772,10 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
         rules: sanitizeRules(c.rules, maxBudgetUsd),
         maxBudgetUsd,
         balance: typeof c.balance === "number" ? c.balance : null,
-        copies: (Array.isArray(c.copies) ? c.copies : []).slice(0, 6).map((x: { lead?: unknown; amount?: unknown; pnl?: unknown }) => ({ lead: String(x.lead ?? "").slice(0, 16), amount: n(x.amount), pnl: n(x.pnl) })),
+        copies: (Array.isArray(c.copies) ? c.copies : []).slice(0, 6).map((x: { lead?: unknown; amount?: unknown; pnl?: unknown }) => ({ lead: String(x.lead ?? "").slice(0, 64), amount: n(x.amount), pnl: n(x.pnl) })),
+        mode: ["off", "on", "autopilot"].includes(String(c.mode)) ? (c.mode as "off" | "on" | "autopilot") : null,
+        sinceStart: typeof c.sinceStart === "number" && Number.isFinite(c.sinceStart) ? c.sinceStart : null,
+        today: typeof c.today === "number" && Number.isFinite(c.today) ? c.today : null,
       },
       {
         traders: () =>

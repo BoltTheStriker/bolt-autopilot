@@ -2,7 +2,7 @@
 // rules call for with what's running, then stops and starts copies to match. Mirrors the live
 // bot's sync (worker/live.ts) but per user, with isolated copy sub-accounts and the user's limits.
 
-import { MIN_COPY_USD, type CopySpec } from "./autopilot.ts";
+import { MIN_COPY_USD, pausedNow, type CopySpec } from "./autopilot.ts";
 import { logUser, type AutoUser } from "./autopilotStore.ts";
 import type { CopyPosition, CopySub, StrikeClient, SubAccount } from "./strike-live.ts";
 
@@ -73,9 +73,13 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
     u.subs ??= [];
     for (const s of active) if (s.account_id && s.account_id !== u.accountId && Object.values(u.managed).includes(s.subscription_id) && !u.subs.includes(s.account_id)) u.subs.push(s.account_id);
     adoptParked(u, subAccts);
+    // A run lasts from Start until the bot stops; its profit includes copies that already ended (for the stop targets).
+    if (u.mode !== "off") u.run ??= { since: now, closed: 0 };
+    const lastPnl = (lead: string) => (u.copies ?? []).find((c) => lc(c.lead) === lc(lead))?.pnl ?? 0;
     // Copies Strike already ended (stop-loss hit, stopped in the Strike app).
     for (const [lead, id] of Object.entries(u.managed)) {
       if (!active.some((s) => s.subscription_id === id)) {
+        if (u.run) u.run.closed += lastPnl(lead); // its last known result, from the previous sync
         delete u.managed[lead];
         logUser(u, now, `Copy of ${short(lead)} ended on Strike (stop-loss or stopped in the app).`);
       }
@@ -107,8 +111,24 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
     if (u.haltedDay !== today(now) && u.dayStart.pnl - pnl > limit) {
       u.haltedDay = today(now);
       logUser(u, now, `Daily loss limit hit (−$${(u.dayStart.pnl - pnl).toFixed(2)}): stopping every copy until tomorrow.`);
+    } else if (u.haltedDay !== today(now) && u.rules?.dailyProfitUsd && pnl - u.dayStart.pnl >= u.rules.dailyProfitUsd) {
+      u.haltedDay = today(now);
+      logUser(u, now, `Daily profit target reached (+$${(pnl - u.dayStart.pnl).toFixed(2)} today, your target was +$${u.rules.dailyProfitUsd.toFixed(2)}): closing every copy to keep it; back tomorrow.`);
     }
-    const target = u.haltedDay === today(now) || u.mode === "off" ? [] : specs;
+    // The user's whole-bot targets: at either one, stop every copy and switch the bot off.
+    const runPnl = (u.run?.closed ?? 0) + pnl;
+    const goal = u.rules;
+    if (u.mode !== "off" && goal?.stopAtProfitUsd && runPnl >= goal.stopAtProfitUsd) {
+      u.mode = "off";
+      logUser(u, now, `Profit target reached: +$${runPnl.toFixed(2)} since Start (your target was +$${goal.stopAtProfitUsd.toFixed(2)}). Stopping every copy; start again whenever you like.`);
+    } else if (u.mode !== "off" && goal?.stopAtLossUsd && runPnl <= -goal.stopAtLossUsd) {
+      u.mode = "off";
+      logUser(u, now, `Loss limit reached: −$${(-runPnl).toFixed(2)} since Start (your limit was −$${goal.stopAtLossUsd.toFixed(2)}). Stopping every copy.`);
+    }
+    // The user's own schedule: a timed pause or the weekend closes the copies; the bot picks up again by itself.
+    const pause = u.rules && u.mode !== "off" ? pausedNow(u.rules, now) : null;
+    if (pause && Object.keys(u.managed).length) logUser(u, now, `${pause}: closing every copy.`);
+    const target = u.haltedDay === today(now) || u.mode === "off" || pause ? [] : specs;
 
     u.pending ??= {};
     u.cooldown ??= {};
@@ -120,6 +140,7 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
       if (a.type === "stop") {
         const sub = active.find((x) => x.subscription_id === a.id)?.account_id;
         await client.stop(a.id, sub && sub !== u.accountId ? sub : undefined);
+        if (u.run) u.run.closed += lastPnl(a.lead);
         delete u.managed[a.lead];
         logUser(u, now, `Stopped copying ${short(a.lead)}: ${a.reason}.`);
         continue;
@@ -158,6 +179,7 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
         logUser(u, now, `Couldn't start a copy of ${short(s.lead)}: ${e instanceof Error ? e.message.replace(/^Strike \S+ \S+ → /, "") : String(e)}. Trying other traders.`);
       }
     }
+    if (u.mode === "off" && !Object.keys(u.managed).length) delete u.run; // the run is over once nothing is copied
     u.lastSyncAt = now;
     u.lastError = undefined;
   } catch (e) {
