@@ -42,6 +42,7 @@ export type AutoUser = {
   decisions?: DecisionRecord[]; // Autopilot's reviews, newest first
   run?: { since: number; closed: number }; // since Start: when, and the profit of copies that already ended
   skipsTold?: string[]; // Strike's failed copy orders already shown in the activity feed
+  fundsTold?: string; // the "not enough free balance" notice already shown (free dollars:copy size), so it isn't repeated
   repick?: boolean; // the rules just changed: the next sync picks traders fresh
   flows?: { netIn: number; at: number }; // money put into the Strike account minus taken out (deposits, withdrawals, transfers)
   note?: string; // why the bot runs fewer copies than the rules ask for (null when it doesn't)

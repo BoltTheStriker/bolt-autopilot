@@ -22,7 +22,9 @@ function fakeStrike(setupCalls = 2) {
   const parkedSubs: { account_id: string; name: string; available_balance: string; margin_used_pct: string }[] = [];
   const refuse = new Set<string>();
   const noLeverage = new Set<string>();
+  const funds = { free: null as number | null }; // the main account's free balance (null: Strike doesn't say)
   const client = {
+    account: async () => (funds.free === null ? {} : { available_balance: String(funds.free) }),
     subscriptions: async () => active.filter((s) => s.status === "active").map((s) => ({ ...s, realized_pnl: String(pnl[s.subscription_id] ?? 0) })),
     copyPositions: async () => [],
     subAccounts: async () => parkedSubs,
@@ -57,7 +59,7 @@ function fakeStrike(setupCalls = 2) {
       return { status: 204, data: null };
     },
   } as unknown as StrikeClient;
-  return { client, calls, active, pnl, parkedSubs, refuse, noLeverage };
+  return { client, calls, active, pnl, parkedSubs, refuse, noLeverage, funds };
 }
 
 test("plan: stop copies the rules dropped, start missing ones, leave manual copies alone", () => {
@@ -213,4 +215,21 @@ test("orders Strike couldn't copy show up once in the activity feed, with the re
   const lines = u.log.filter((l) => /Couldn't copy a BTC trade/.test(l.text));
   assert.equal(lines.length, 1);
   assert.match(lines[0].text, /more of this copy on one coin than its limit allows/);
+});
+
+test("less free balance than the rules ask for: the last copy uses what's free, and under $50 it waits (said once)", async () => {
+  const { client, calls, funds } = fakeStrike();
+  const big = (lead: string): CopySpec => ({ ...spec(lead), amount: 100, stopLossUsd: 15, maxMarginPerSymbol: 50 });
+  funds.free = 171; // a deposit is still partly on its way
+  const u = user();
+  await syncUser(u, client, [big("0xa"), big("0xb"), big("0xc")], T);
+  assert.deepEqual(calls, ["copy 0xa $100", "copy 0xb $70"]); // $71 free after the first, $1 kept for fees
+  assert.match(u.log.find((l) => /0xb/.test(l.text))!.text, /with \$70\.00, all that's free on Strike right now \(your rules ask for \$100\.00\).*stop at −\$10\.50/);
+  assert.match(u.log[0].text, /Not enough free balance on Strike for another copy: \$1\.00 free, a copy needs at least \$50/);
+  assert.equal(u.cooldown?.["0xc"], undefined);
+  await syncUser(u, client, [big("0xa"), big("0xb"), big("0xc")], T + 120_000); // still short: no repeat
+  assert.equal(u.log.filter((l) => /Not enough free balance/.test(l.text)).length, 1);
+  funds.free = 120; // the rest landed
+  await syncUser(u, client, [big("0xa"), big("0xb"), big("0xc")], T + 240_000);
+  assert.ok(u.managed["0xc"]);
 });

@@ -182,6 +182,14 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
     const parked = parkedOf(u, subAccts, active)
       .filter((a) => a.available >= MIN_COPY_USD)
       .sort((x, y) => y.available - x.available);
+    // Free balance on the main account, read once when a copy is about to start (null: Strike didn't say).
+    let free: number | null | undefined;
+    const freeNow = async () =>
+      free !== undefined
+        ? free
+        : (free = await Promise.resolve()
+            .then(() => client.account())
+            .then((a) => (Number.isFinite(Number(a?.available_balance)) ? Number(a.available_balance) : null), () => null));
     for (const a of planUser(u.managed, target, active)) {
       if (a.type === "stop") {
         const sub = active.find((x) => x.subscription_id === a.id)?.account_id;
@@ -191,7 +199,7 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
         logUser(u, now, `Stopped copying ${short(a.lead)}: ${a.reason}.`);
         continue;
       }
-      const s = a.spec;
+      let s = a.spec;
       try {
         const spot = !u.pending[lc(s.lead)] ? parked.shift() : undefined;
         if (spot) {
@@ -203,6 +211,23 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
           u.managed[s.lead] = r.subscription_id;
           logUser(u, now, `Copying ${short(s.lead)} with $${amount.toFixed(2)}, reusing money from an earlier copy (leverage ≤ ${s.maxLeverage}x).`);
           continue;
+        }
+        // Less free money on Strike than the copy asks for (a deposit still on its way, a budget above the balance): use
+        // what's there, a dollar kept for fees, with the limits scaled to match. Under a useful copy size, wait and say
+        // so once (the trader isn't at fault, so no cooldown).
+        const f = await freeNow();
+        const usable = f === null ? Infinity : Math.floor((f - 1) * 100) / 100;
+        if (usable < s.amount) {
+          if (usable < MIN_COPY_USD) {
+            const told = `${Math.floor(f!)}:${s.amount}`;
+            if (u.fundsTold !== told) {
+              u.fundsTold = told;
+              logUser(u, now, `Not enough free balance on Strike for another copy: $${f!.toFixed(2)} free, a copy needs at least $${MIN_COPY_USD}. It starts by itself once more money arrives.`);
+            }
+            continue;
+          }
+          const k = usable / s.amount;
+          s = { ...s, amount: usable, stopLossUsd: Math.max(1, Math.round(s.stopLossUsd * k * 100) / 100), maxMarginPerSymbol: Math.floor(s.maxMarginPerSymbol * k * 100) / 100 };
         }
         // From the main account: the money returns to the main balance when the copy stops.
         delete u.pending[lc(s.lead)];
@@ -217,7 +242,10 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
         const sub = r as CopySub;
         if (!sub.subscription_id) throw new Error("Strike didn't return a copy id");
         u.managed[s.lead] = sub.subscription_id;
-        logUser(u, now, `Copying ${short(s.lead)} with $${s.amount.toFixed(2)} (${note}, stop at −$${s.stopLossUsd.toFixed(2)}).`);
+        if (typeof free === "number") free -= s.amount;
+        u.fundsTold = undefined;
+        const smaller = s.amount < a.spec.amount ? `, all that's free on Strike right now (your rules ask for $${a.spec.amount.toFixed(2)})` : "";
+        logUser(u, now, `Copying ${short(s.lead)} with $${s.amount.toFixed(2)}${smaller} (${note}, stop at −$${s.stopLossUsd.toFixed(2)}).`);
       } catch (e) {
         // Strike refused this copy: say so once, and don't retry this trader for a while.
         delete u.pending[lc(s.lead)];
