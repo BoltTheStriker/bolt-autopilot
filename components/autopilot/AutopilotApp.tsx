@@ -808,6 +808,7 @@ export function AutopilotApp() {
                 busy={busy}
                 onDeposit={(key, ada) => void depositAda(key, ada)}
                 onSkip={() => setSkipFund(true)}
+                swapApi={swapApi}
               />
             )}
             {showRules && (

@@ -7,6 +7,7 @@ import type { InstalledWallet } from "@/lib/wallet";
 import { replayWeek, type Replay } from "@/lib/rulesReplay";
 import { boostOf, describeRules, fitting, MIN_COPY_USD, perCopyUsd, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Markets, type PreviewTrader, type Risk } from "@/worker/autopilot";
 import { MoneyPath } from "./strike";
+import { TokenDeposit, type SwapApi } from "./TokenDeposit";
 import { ChoiceCards, Slider, type TourStep } from "./ui";
 
 export const STEPS = [
@@ -169,6 +170,7 @@ export function FundCard({
   onDeposit,
   onSkip,
   adaUsd,
+  swapApi,
 }: {
   walletKey: string | null;
   wallets: InstalledWallet[];
@@ -176,46 +178,74 @@ export function FundCard({
   onDeposit: (key: string, ada: number) => void;
   onSkip: () => void;
   adaUsd?: number | null;
+  swapApi?: SwapApi | null; // "Other token": swap a wallet token to ADA through SteelSwap first
 }) {
   const [ada, setAda] = useState(1000);
   const [key, setKey] = useState<string | null>(walletKey ?? wallets[0]?.key ?? null);
+  const [tab, setTab] = useState<"ada" | "token">("ada");
   return (
     <section className="card rounded-3xl p-6 sm:p-8" data-tour="fund">
       <h2 className="font-display text-2xl font-semibold">Add funds to your Strike account</h2>
-      <p className="mt-1 text-sm text-muted">Send ADA from your wallet. Strike converts it to trading balance. You sign one transaction; your wallet shows exactly where it goes.</p>
-      <MoneyPath direction="in" className="mt-4 max-w-md" />
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
-        <div>
-          <div className="flex flex-wrap gap-2">
-            {[500, 1000, 2000, 5000].map((v) => (
-              <button key={v} onClick={() => setAda(v)} className={`rounded-full px-4 py-2 font-mono text-sm transition ${ada === v ? "bg-mint text-ink" : "bg-white/[0.06] text-soft hover:text-white"}`}>
-                {v} ₳
-              </button>
-            ))}
-          </div>
-          <label className="mt-4 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 focus-within:border-mint/50">
-            <span className="text-muted">₳</span>
-            <input type="number" min={5} value={ada} onChange={(e) => setAda(Number(e.target.value))} className="w-full bg-transparent font-mono text-lg outline-none" />
-            <span className="text-xs text-muted">ADA</span>
-          </label>
-          <DepositHint ada={ada} adaUsd={adaUsd} />
-          {wallets.length > 1 && (
-            <div className="mt-3 flex flex-wrap gap-2 text-xs">
-              {wallets.map((w) => (
-                <button key={w.key} onClick={() => setKey(w.key)} className={`rounded-full px-3 py-1 ${key === w.key ? "bg-white/15 text-white" : "text-muted"}`}>
-                  {w.name}
+      <p className="mt-1 text-sm text-muted">
+        {tab === "ada"
+          ? "Send ADA from your wallet. Strike converts it to trading balance. You sign one transaction; your wallet shows exactly where it goes."
+          : "Hold SNEK, NIGHT or another token? Swap it to ADA in your wallet, then deposit the ADA."}
+      </p>
+      {swapApi && (
+        <div className="mt-4 inline-flex rounded-full bg-white/[0.05] p-1 text-sm">
+          {(
+            [
+              ["ada", "ADA"],
+              ["token", "Other token"],
+            ] as const
+          ).map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)} className={`rounded-full px-4 py-1.5 font-semibold transition ${tab === id ? "bg-mint text-ink" : "text-soft hover:text-white"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+      {tab === "token" && swapApi ? (
+        <div className="max-w-xl">
+          <TokenDeposit walletKey={key} api={swapApi} onAdaReady={(n) => (setAda(n), setTab("ada"))} />
+        </div>
+      ) : (
+        <>
+        <MoneyPath direction="in" className="mt-4 max-w-md" />
+        <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
+          <div>
+            <div className="flex flex-wrap gap-2">
+              {[500, 1000, 2000, 5000].map((v) => (
+                <button key={v} onClick={() => setAda(v)} className={`rounded-full px-4 py-2 font-mono text-sm transition ${ada === v ? "bg-mint text-ink" : "bg-white/[0.06] text-soft hover:text-white"}`}>
+                  {v} ₳
                 </button>
               ))}
             </div>
-          )}
+            <label className="mt-4 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 focus-within:border-mint/50">
+              <span className="text-muted">₳</span>
+              <input type="number" min={5} value={ada} onChange={(e) => setAda(Number(e.target.value))} className="w-full bg-transparent font-mono text-lg outline-none" />
+              <span className="text-xs text-muted">ADA</span>
+            </label>
+            <DepositHint ada={ada} adaUsd={adaUsd} />
+            {wallets.length > 1 && (
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                {wallets.map((w) => (
+                  <button key={w.key} onClick={() => setKey(w.key)} className={`rounded-full px-3 py-1 ${key === w.key ? "bg-white/15 text-white" : "text-muted"}`}>
+                    {w.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
+            <button disabled={!key || ada < 5 || busy === "deposit"} onClick={() => key && onDeposit(key, ada)} className="rounded-full bg-mint px-7 py-3 font-semibold text-ink transition hover:bg-mint-2 disabled:opacity-50">
+              {busy === "deposit" ? "Check your wallet…" : `Deposit ${ada} ₳`}
+            </button>
+            <button onClick={onSkip} className="rounded-full px-5 py-2.5 text-sm text-muted hover:text-white">I already have funds on Strike</button>
+          </div>
         </div>
-        <div className="flex flex-col gap-2 sm:flex-row lg:flex-col">
-          <button disabled={!key || ada < 5 || busy === "deposit"} onClick={() => key && onDeposit(key, ada)} className="rounded-full bg-mint px-7 py-3 font-semibold text-ink transition hover:bg-mint-2 disabled:opacity-50">
-            {busy === "deposit" ? "Check your wallet…" : `Deposit ${ada} ₳`}
-          </button>
-          <button onClick={onSkip} className="rounded-full px-5 py-2.5 text-sm text-muted hover:text-white">I already have funds on Strike</button>
-        </div>
-      </div>
+        </>
+      )}
     </section>
   );
 }

@@ -130,7 +130,8 @@ export function TokenDeposit({ walletKey, api, onAdaReady }: { walletKey: string
 
   return (
     <div className="mt-4">
-      {!list && !err && <div className="h-32 animate-pulse rounded-2xl bg-white/[0.04]" />}
+      {!walletKey && <p className="rounded-2xl bg-white/[0.03] px-4 py-4 text-sm text-muted">Connect your wallet in this browser to see its tokens.</p>}
+      {walletKey && !list && !err && <div className="h-32 animate-pulse rounded-2xl bg-white/[0.04]" />}
       {list && !list.length && <p className="rounded-2xl bg-white/[0.03] px-4 py-4 text-sm text-muted">No tokens worth ₳5 or more in this wallet. Deposit ADA instead.</p>}
       {list && list.length > 0 && (
         <ul className="max-h-48 space-y-1 overflow-y-auto">
