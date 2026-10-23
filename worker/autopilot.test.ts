@@ -35,17 +35,17 @@ test("goals change the order: steady = calmest good traders, growth = more upsid
 
 test("copy specs: risk sets how much works and Strike's limits; small budgets copy fewer traders", () => {
   const low = copySpecs(cands.slice(0, 3), { ...defaultRules(300, "low"), traders: 3 }, SYMBOLS);
-  // Low risk deploys 50% of $300 = $150 → 3 copies of $50, 3x leverage cap, stop at −10%.
-  assert.deepEqual(low.map((s) => [s.amount, s.maxLeverage, s.stopLossUsd, s.multiplier]), [[50, 3, 5, 1], [50, 3, 5, 1], [50, 3, 5, 1]]);
+  // Low risk deploys 80% of $300 = $240 → 3 copies of $80, 3x leverage cap, stop at −10%.
+  assert.deepEqual(low.map((s) => [s.amount, s.maxLeverage, s.stopLossUsd, s.multiplier]), [[80, 3, 8, 1], [80, 3, 8, 1], [80, 3, 8, 1]]);
   const high = copySpecs(cands.slice(0, 2), { ...defaultRules(400, "high"), traders: 2, maxLeverage: 10 }, SYMBOLS);
   assert.deepEqual(high.map((s) => [s.amount, s.multiplier, s.maxMarginPerSymbol]), [[200, 2, 200], [200, 2, 200]]); // the whole copy may go on one coin
-  // $120 at medium risk = $90 working: only one $90 copy fits the $50 minimum.
-  assert.equal(copySpecs(cands, { ...defaultRules(120), traders: 3 }, SYMBOLS).length, 1);
+  // $100 at medium risk = $90 working: only one $90 copy fits the $50 minimum.
+  assert.equal(copySpecs(cands, { ...defaultRules(100), traders: 3 }, SYMBOLS).length, 1);
   assert.equal(copySpecs(cands, { ...defaultRules(40), traders: 3 }, SYMBOLS).length, 0);
 });
 
 test("rules read as plain language", () => {
-  assert.match(describeRules({ ...defaultRules(300, "low"), markets: "realworld" }), /low risk: 50% of \$300 working.*real-world markets only.*leverage capped at 3x/);
+  assert.match(describeRules({ ...defaultRules(300, "low"), markets: "realworld" }), /low risk: 80% of \$300 working.*real-world markets only.*leverage capped at 3x/);
 });
 
 test("real-world share from Strike's top assets: xyz: markets and listed stocks count, coins don't", () => {
@@ -99,9 +99,10 @@ test("new picks must be copyable at the user's own copy size", () => {
   const cov = (pairs: [number, number][]) => pairs.map(([amount, share]) => ({ amount, share }));
   const big = { lead: "0xbig", score: 0.9, dd: 0.05, roi30d: 0.2, realWorldShare: 0.2, coverage: cov([[100, 0.3], [250, 0.7]]) }; // needs $250+ copies
   const any = { lead: "0xany", score: 0.5, dd: 0.05, roi30d: 0.2, realWorldShare: 0.2, coverage: cov([[50, 0.8]]) };
-  assert.equal(coverageFor(big, 120), 0.3);
+  assert.equal(coverageFor(big, 100), 0.3);
+  assert.equal(coverageFor(big, 120).toFixed(2), "0.38"); // between Strike's sizes: interpolated (log scale), not the size below
   assert.equal(coverageFor(big, 300), 0.7);
-  const small = { ...defaultRules(300), risk: "medium" as const, traders: 2 }; // $112 per copy
+  const small = { ...defaultRules(300), risk: "medium" as const, traders: 2 }; // $135 per copy: about 43%, too few
   assert.deepEqual(pickTraders([big, any], small).map((c) => c.lead), ["0xany"]);
   const large = { ...defaultRules(500), risk: "high" as const, traders: 2 }; // $250 per copy
   assert.deepEqual(pickTraders([big, any], large).map((c) => c.lead), ["0xbig", "0xany"]);
@@ -119,7 +120,7 @@ test("pickTraders prefers busy traders in Strike's markets; under half on Strike
 
 test("low risk keeps at most half a copy on one coin; medium and high let a copy follow an all-in trader", () => {
   const c: Candidate = { lead: "0xa", score: 0.9, dd: 0.05, roi30d: 0.2, realWorldShare: 0.1 };
-  assert.equal(copySpecs([c], { ...defaultRules(400, "low"), traders: 1 }, [])[0].maxMarginPerSymbol, 100); // $200 copy
+  assert.equal(copySpecs([c], { ...defaultRules(400, "low"), traders: 1 }, [])[0].maxMarginPerSymbol, 160); // $320 copy
   assert.equal(copySpecs([c], { ...defaultRules(400, "high"), traders: 1 }, [])[0].maxMarginPerSymbol, 400);
 });
 

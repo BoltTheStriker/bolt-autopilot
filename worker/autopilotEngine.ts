@@ -61,9 +61,10 @@ export function copiesNow(u: AutoUser, active: CopySub[], rows: CopyPosition[] |
   });
 }
 
-/** Money in minus money out on the user's Strike account (every 5 minutes), so profit = what's there − what was put in. */
-async function readFlows(u: AutoUser, client: StrikeClient, now: number) {
-  if (u.flows && now - u.flows.at < 5 * 60_000) return;
+/** Money in minus money out on the user's Strike account (at most once a minute), so profit = what's there − what was
+ *  put in. The dashboard reads it with the balance, so a new deposit never shows up as profit. */
+export async function readFlows(u: AutoUser, client: StrikeClient, now: number) {
+  if (u.flows && now - u.flows.at < 60_000) return;
   try {
     const p = await client.request<{ capital_flows?: Record<string, string> }>("GET", "/v2/portfolio");
     const f = p.data?.capital_flows;

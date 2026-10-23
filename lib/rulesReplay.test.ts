@@ -8,20 +8,20 @@ const line = (end: number) => Array.from({ length: WEEK_POINTS }, (_, i) => (end
 const trader = (lead: string, score: number, week: number[], roi30d = 0.2, dd = 0.05): PreviewTrader => ({ lead, score, dd, roi30d, realWorldShare: 0.3, roi7d: week.at(-1)!, week, open: [] });
 
 test("replays the picks over the week, on the whole budget (reserve included)", () => {
-  const rules = { ...defaultRules(1000, "medium"), traders: 2 }; // 2 × $375 working
+  const rules = { ...defaultRules(1000, "medium"), traders: 2 }; // 2 × $450 working
   const r = replayWeek([trader("A", 0.9, line(0.1)), trader("B", 0.8, line(0.02))], rules)!;
   assert.equal(r.copies.length, 2);
   assert.equal(r.curve.length, WEEK_POINTS);
-  assert.equal(r.pnl, 375 * 0.1 + 375 * 0.02); // $45 on $1,000
-  assert.equal(r.ret, 0.045);
+  assert.equal(r.pnl, 450 * 0.1 + 450 * 0.02); // $54 on $1,000
+  assert.equal(r.ret, 0.054);
   assert.equal(r.worst, 0);
 });
 
 test("a stop-loss caps a copy's loss; High risk sizes copies 2×", () => {
-  const med = { ...defaultRules(1000, "medium"), traders: 1 }; // $750, stop at −15%
+  const med = { ...defaultRules(1000, "medium"), traders: 1 }; // $900, stop at −15%
   const r = replayWeek([trader("A", 0.9, line(-0.3))], med)!;
   assert.equal(r.copies[0].stopped, true);
-  assert.equal(r.pnl, -750 * 0.15);
+  assert.equal(r.pnl, -900 * 0.15);
   const high = { ...defaultRules(1000, "high"), traders: 1 }; // $1,000 at 2×
   assert.equal(replayWeek([trader("A", 0.9, line(0.05))], high)!.pnl, 1000 * 0.05 * 2);
 });

@@ -796,6 +796,7 @@ export function AutopilotApp() {
             {step === 1 && session && pendingDeposit && <DepositPending {...pendingDeposit} onContinue={() => setSkipFund(true)} />}
             {step === 1 && session && !pendingDeposit && (
               <FundCard
+                adaUsd={status?.adaUsd ?? null}
                 walletKey={walletKey}
                 wallets={myWallets}
                 busy={busy}
@@ -930,6 +931,7 @@ export function AutopilotApp() {
           onDeposit={depositAda}
           onClose={() => (setDepositOpen(false), setError(""))}
           swapApi={swapApi}
+          adaUsd={status?.adaUsd ?? null}
         />
       )}
       {session && me && (

@@ -39,8 +39,9 @@ export type AutoRules = {
 
 /** What each risk level means. Users can tighten leverage / stop-loss beyond these. */
 export const RISK_LEVELS: Record<Risk, { deploy: number; maxLeverage: number; stopLossPct: number; multiplier: number; maxBoost: number; dailyLossPct: number }> = {
-  low: { deploy: 0.5, maxLeverage: 3, stopLossPct: 0.1, multiplier: 1, maxBoost: 1, dailyLossPct: 0.05 },
-  medium: { deploy: 0.75, maxLeverage: 5, stopLossPct: 0.15, multiplier: 1, maxBoost: 2, dailyLossPct: 0.08 },
+  // Most of the budget works on every level (small copies can't follow most traders); risk is in leverage, stops and limits.
+  low: { deploy: 0.8, maxLeverage: 3, stopLossPct: 0.1, multiplier: 1, maxBoost: 1, dailyLossPct: 0.05 },
+  medium: { deploy: 0.9, maxLeverage: 5, stopLossPct: 0.15, multiplier: 1, maxBoost: 2, dailyLossPct: 0.08 },
   high: { deploy: 1, maxLeverage: 10, stopLossPct: 0.2, multiplier: 2, maxBoost: 3, dailyLossPct: 0.12 },
 };
 
@@ -166,8 +167,8 @@ export type Candidate = {
   bets?: string[];
 };
 
-export const MIN_COVERAGE = 0.6; // a copy must be able to follow at least this share of the trader's trades
-export const MIN_STRIKE_SHARE = 0.7; // a new pick trades mostly in Strike's markets (the rest is invisible to a copy), as the live bot asks
+export const MIN_COVERAGE = 0.5; // a copy must be able to follow at least this share of the trader's trades
+export const MIN_STRIKE_SHARE = 0.6; // a new pick trades mostly in Strike's markets (the rest is invisible to a copy)
 
 /** How well a copy would actually work with this trader right now, about 0.3–1.1. A copy opens the trader's current
  *  positions at once and then follows new trades: so holding positions now, trading through the day, trading in
@@ -183,7 +184,15 @@ export function followFit(c: Candidate): number {
 /** Share of a trader's trades a copy of `amount` can follow (unknown: assume yes). */
 export function coverageFor(c: Candidate, amount: number): number {
   if (!c.coverage?.length) return 1;
-  return c.coverage.reduce((best, t) => (t.amount <= amount ? Math.max(best, t.share) : best), 0);
+  // Strike gives it at fixed sizes ($50, $100, $200…): between two, interpolate on a log scale (a $90 copy follows
+  // nearly what a $100 one does), rather than judging it by the size below.
+  const t = [...c.coverage].sort((a, b) => a.amount - b.amount);
+  if (amount <= t[0].amount) return t[0].share;
+  for (let i = 0; i < t.length - 1; i++) {
+    const [lo, hi] = [t[i], t[i + 1]];
+    if (amount <= hi.amount) return lo.share + ((hi.share - lo.share) * Math.log(amount / lo.amount)) / Math.log(hi.amount / lo.amount);
+  }
+  return t[t.length - 1].share;
 }
 
 /** What the public demo gets about a trader: enough to make the same picks and estimate a week of copying. */

@@ -6,7 +6,7 @@ import { defaultRules, type LiveMark, type PreviewTrader } from "../worker/autop
 
 const t = (lead: string, score: number): PreviewTrader => ({ lead, score, dd: 0.05, roi30d: 0.2, realWorldShare: 0.2, roi7d: 0.05, week: [], open: [] });
 const mark = (pnl: number, positions: LiveMark["positions"] = [], since = 1): LiveMark => ({ pnl, unrealized: 0, acct: 10_000, since, at: 0, positions });
-const rules = { ...defaultRules(DEMO_BALANCE, "medium"), traders: 2 }; // 75% working: 2 × $375
+const rules = { ...defaultRules(DEMO_BALANCE, "medium"), traders: 2 }; // 90% working: 2 × $450
 
 test("starts at $1,000 with the engine's picks and moves with each trader's profit ÷ account size", () => {
   const d0 = startDemo([t("a", 0.9), t("b", 0.8), t("c", 0.1)], { a: mark(0), b: mark(500), c: mark(0) }, rules, 0);
@@ -15,9 +15,9 @@ test("starts at $1,000 with the engine's picks and moves with each trader's prof
   // a makes $500 on a $10K account (+5%), b loses $200 (−2%).
   const d1 = stepDemo(d0, { a: mark(500), b: mark(300) }, rules, 60_000);
   const [a, b] = demoCopies(d1, { a: mark(500), b: mark(300) }, rules.stopLossPct);
-  assert.equal(a.pnl, 18.75); // $375 × 5%
-  assert.equal(b.pnl, -7.5); // $375 × −2%
-  assert.equal(demoValue(d1, rules.stopLossPct), DEMO_BALANCE + 18.75 - 7.5);
+  assert.equal(a.pnl, 22.5); // $450 × 5%
+  assert.equal(b.pnl, -9); // $450 × −2%
+  assert.equal(demoValue(d1, rules.stopLossPct), DEMO_BALANCE + 22.5 - 9);
 });
 
 test("stop-loss closes a copy at its limit and it stays closed", () => {
@@ -53,8 +53,8 @@ test("Autopilot mode: a stopped copy's money moves to the next best fit; the mon
   assert.equal(plain.copies[0].stopped, T0 + 60_000); // "Follow my rules": the copy just stops
   assert.equal(auto.copies[0].lead, "C"); // Autopilot: what's left goes on to C
   assert.equal(auto.copies[0].stopped, null);
-  assert.equal(auto.copies[0].amount, 318.75); // $375 − 15%
-  assert.match(auto.log[0].text, /^Autopilot: A hit its stop-loss, so it moved the remaining \$318\.75 to C/);
+  assert.equal(auto.copies[0].amount, 382.5); // $450 − 15%
+  assert.match(auto.log[0].text, /^Autopilot: A hit its stop-loss, so it moved the remaining \$382\.50 to C/);
   assert.equal(Math.round(demoValue(auto, rules.stopLossPct) * 100), Math.round(demoValue(plain, rules.stopLossPct) * 100)); // same money, moved
   assert.deepEqual(auto.bench, ["D"]);
 });
@@ -74,13 +74,13 @@ test("Autopilot mode records its reviews: a check when switched on, the stop-los
 test("a profit target closes every copy at its result and ends the run; the value stays put", () => {
   const r = { ...rules, traders: 1, stopAtProfitUsd: 20 };
   const d0 = startDemo([t("a", 0.9)], { a: mark(0) }, r, 0);
-  const d1 = stepDemo(d0, { a: mark(200) }, r, 60_000); // one $750 copy × 2% = +$15
+  const d1 = stepDemo(d0, { a: mark(200) }, r, 60_000); // one $900 copy × 2% = +$18
   assert.equal(d1.done, undefined);
-  const d2 = stepDemo(d1, { a: mark(400) }, r, 120_000); // × 4% = +$30
-  assert.match(d2.done!.text, /^Profit target reached: \+\$30\.00 since Start/);
-  assert.equal(demoValue(d2, r.stopLossPct), DEMO_BALANCE + 30);
+  const d2 = stepDemo(d1, { a: mark(400) }, r, 120_000); // × 4% = +$36
+  assert.match(d2.done!.text, /^Profit target reached: \+\$36\.00 since Start/);
+  assert.equal(demoValue(d2, r.stopLossPct), DEMO_BALANCE + 36);
   const d3 = stepDemo(d2, { a: mark(-5_000) }, r, 180_000); // closed: the trader's moves no longer count
-  assert.equal(demoValue(d3, r.stopLossPct), DEMO_BALANCE + 30);
+  assert.equal(demoValue(d3, r.stopLossPct), DEMO_BALANCE + 36);
 });
 
 test("boost sizes the copies, blocked traders are skipped, and a daily profit target pauses the day", () => {
@@ -97,10 +97,10 @@ test("switch trader: the copy keeps its money (gains banked) and follows the nex
   const r = { ...rules, traders: 1 };
   const d0 = startDemo([t("a", 0.9), t("b", 0.8)], { a: mark(0), b: mark(0) }, r, 0);
   assert.deepEqual(d0.bench, ["b"]);
-  const d1 = stepDemo(d0, { a: mark(100), b: mark(0) }, r, 60_000); // a: +1% of $750 = +$7.50
+  const d1 = stepDemo(d0, { a: mark(100), b: mark(0) }, r, 60_000); // a: +1% of $900 = +$9
   const d2 = swapDemoCopy(d1, "a", { a: mark(100), b: mark(50) }, 120_000)!;
   assert.equal(d2.copies[0].lead, "b");
-  assert.equal(demoValue(d2, r.stopLossPct), DEMO_BALANCE + 7.5); // nothing lost in the switch
+  assert.equal(demoValue(d2, r.stopLossPct), DEMO_BALANCE + 9); // nothing lost in the switch
   assert.match(d2.log[0].text, /^Switched from a to b as you asked/);
   assert.equal(swapDemoCopy(d2, "b", { a: mark(0), b: mark(0) }, 180_000), null); // no one left to switch to
 });

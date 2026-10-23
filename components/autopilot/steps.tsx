@@ -137,8 +137,47 @@ export function ConnectCard({ wallets, busy, disabled, onConnect, onDemo }: { wa
   );
 }
 
-export function FundCard({ walletKey, wallets, busy, onDeposit, onSkip }: { walletKey: string | null; wallets: InstalledWallet[]; busy: string; onDeposit: (key: string, ada: number) => void; onSkip: () => void }) {
-  const [ada, setAda] = useState(250);
+/** How much to put in for copy trading to work: about $100 per copy (smaller copies can follow few traders), so $200 for
+ *  two traders; in ADA at today's price. */
+export const MIN_START_USD = 100;
+export const GOOD_START_USD = 200;
+export function DepositHint({ ada, adaUsd }: { ada: number; adaUsd?: number | null }) {
+  if (!adaUsd) return null;
+  const usdNow = ada * adaUsd;
+  const toAda = (usd: number) => Math.ceil(usd / adaUsd / 10) * 10;
+  const low = usdNow < MIN_START_USD;
+  return (
+    <div className={`mt-3 rounded-xl border px-3.5 py-2.5 text-xs leading-relaxed ${low ? "border-gold/35 bg-gold/[0.07] text-gold" : "border-mint/20 bg-mint/[0.04] text-soft"}`}>
+      <p>
+        <span className="font-mono font-semibold text-white">≈ ${usdNow.toLocaleString("en-US", { maximumFractionDigits: 2 })}</span> at today&apos;s ADA price (${adaUsd.toFixed(3)}).
+      </p>
+      <p className="mt-0.5">
+        {low
+          ? `Copy trading needs about $${MIN_START_USD} per trader to follow most of their trades: deposit at least ₳${toAda(MIN_START_USD)} (≈ $${MIN_START_USD}); ₳${toAda(GOOD_START_USD)} (≈ $${GOOD_START_USD}) lets the bot copy two traders.`
+          : usdNow < GOOD_START_USD
+            ? `Enough for one trader at a good size. ₳${toAda(GOOD_START_USD)} (≈ $${GOOD_START_USD}) lets the bot copy two.`
+            : `Room for ${Math.floor(usdNow / MIN_START_USD)} traders at about $${MIN_START_USD} each.`}
+      </p>
+    </div>
+  );
+}
+
+export function FundCard({
+  walletKey,
+  wallets,
+  busy,
+  onDeposit,
+  onSkip,
+  adaUsd,
+}: {
+  walletKey: string | null;
+  wallets: InstalledWallet[];
+  busy: string;
+  onDeposit: (key: string, ada: number) => void;
+  onSkip: () => void;
+  adaUsd?: number | null;
+}) {
+  const [ada, setAda] = useState(1000);
   const [key, setKey] = useState<string | null>(walletKey ?? wallets[0]?.key ?? null);
   return (
     <section className="card rounded-3xl p-6 sm:p-8" data-tour="fund">
@@ -148,7 +187,7 @@ export function FundCard({ walletKey, wallets, busy, onDeposit, onSkip }: { wall
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_auto] lg:items-end">
         <div>
           <div className="flex flex-wrap gap-2">
-            {[100, 250, 500, 1000].map((v) => (
+            {[500, 1000, 2000, 5000].map((v) => (
               <button key={v} onClick={() => setAda(v)} className={`rounded-full px-4 py-2 font-mono text-sm transition ${ada === v ? "bg-mint text-ink" : "bg-white/[0.06] text-soft hover:text-white"}`}>
                 {v} ₳
               </button>
@@ -159,6 +198,7 @@ export function FundCard({ walletKey, wallets, busy, onDeposit, onSkip }: { wall
             <input type="number" min={5} value={ada} onChange={(e) => setAda(Number(e.target.value))} className="w-full bg-transparent font-mono text-lg outline-none" />
             <span className="text-xs text-muted">ADA</span>
           </label>
+          <DepositHint ada={ada} adaUsd={adaUsd} />
           {wallets.length > 1 && (
             <div className="mt-3 flex flex-wrap gap-2 text-xs">
               {wallets.map((w) => (

@@ -20,7 +20,7 @@ import { verifySignData } from "./cose.ts";
 import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, fitting, sharedRules, MIN_COPY_USD, pausedNow, perCopyUsd, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type AutoRules, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
 import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, newSession, publicUser, saveAutoStore, type AutoUser, type Mode } from "./autopilotStore.ts";
 import { steelBuild, steelNotify, steelOn, steelQuote, steelTokens } from "./steelswap.ts";
-import { copiesNow, parkedOf, syncUser } from "./autopilotEngine.ts";
+import { copiesNow, parkedOf, readFlows, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { copilotReply, type ChatTurn } from "./copilot.ts";
 import { aiDecision, applyDecision, autopilotSignals, droppedLeads, effectiveRules, rulesDecision, type TraderStats } from "./autotune.ts";
@@ -559,9 +559,10 @@ const AUTO_FILE = `${DATA}/autopilot.json`;
 const autoStore = loadAutoStore(AUTO_FILE);
 /** The bot's ranked traders for users' bots (best first), refreshed every cycle. */
 let autoPool: Candidate[] = [];
-// Autopilot's traders meet the live bot's standard: traded in the last day, in at least 2 of the last 24 hours, and
-// mostly in Strike's markets. A copy only follows new trades, so a quiet trader leaves the user's money idle.
-const AUTO_RULES = { ...bot, entry: { ...bot.entry, minActiveHours24h: 2, maxIdleHours: 24, minStrikeShare: 0.7 } } as unknown as typeof bot; // bot's config is `as const`
+// Autopilot's traders: traded in the last 2 days, in at least 1 of the last 24 hours, 60%+ in Strike's markets and up 5%+
+// over 30 days. Wider than the live bot's list so small budgets have a real choice; the ranking still puts busy traders
+// who are in a trade now first, so a new copy has something to follow.
+const AUTO_RULES = { ...bot, entry: { ...bot.entry, minActiveHours24h: 1, maxIdleHours: 48, minStrikeShare: 0.6, minRoi30d: 0.05 } } as unknown as typeof bot; // bot's config is `as const`
 /** Traders who could make Autopilot's list (best first, capped so the activity check stays light on Hyperliquid). */
 const autoCandidates = (items: Lead[], now: number) =>
   items
@@ -611,7 +612,7 @@ function updateAutoPool(cands: Lead[], s: BotState, now: number) {
       },
     }))
     .sort((a, b) => b.cand.score - a.cand.score)
-    .slice(0, 30);
+    .slice(0, 40);
   autoPool = ranked.map((r) => r.cand);
   for (const { c } of ranked) autoAcct.set(short(c.address), n(c.account_value));
   autoPreview = ranked.map(({ c, cand }) => ({ ...cand, lead: short(c.address), roi7d: n(c.roi?.["7d"]), week: weekCurve(returnCurve(c), n(c.roi?.["7d"]), now), open: (c.openBets ?? []).slice(0, 4) }));
@@ -826,6 +827,17 @@ function budgetHint(rules: AutoRules): string {
   return "";
 }
 
+/** ADA's price in dollars (Hyperliquid's mid, cached a minute), so deposits can show their dollar value. */
+let adaPrice = { at: 0, usd: null as number | null };
+async function adaUsd(): Promise<number | null> {
+  if (Date.now() - adaPrice.at > 60_000) {
+    const mids = await json<Record<string, string>>(HL, { type: "allMids" }).catch(() => null);
+    const v = Number(mids?.ADA);
+    adaPrice = { at: Date.now(), usd: v > 0 ? v : adaPrice.usd };
+  }
+  return adaPrice.usd;
+}
+
 /** Why a switched-on bot has nothing to copy, in the user's words (null when copies can start). */
 function idleReason(u: AutoUser): string | null {
   const rules = effectiveRules(u);
@@ -939,7 +951,10 @@ const autoPending = new Map<string, { address: string; publicKey: string; privat
 async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status: number; data: unknown }> {
   // ready: real accounts work (builder code set); open: also public. In private beta only an admin connects.
   if (url.pathname === "/autopilot/status")
-    return { status: 200, data: { open: autoOn() && AUTO.public, ready: autoOn(), network: autoNetwork(), maxBudgetUsd: AUTO.maxBudgetUsd, traders: autoPool.length, copilot: copilotOn() } };
+    return {
+      status: 200,
+      data: { open: autoOn() && AUTO.public, ready: autoOn(), network: autoNetwork(), maxBudgetUsd: AUTO.maxBudgetUsd, traders: autoPool.length, copilot: copilotOn(), adaUsd: await adaUsd() },
+    };
   // Public, also while closed: the demo runs the real picks; Earn shows SLP live.
   if (url.pathname === "/autopilot/preview") return { status: 200, data: { at: Date.now(), traders: autoPreview } };
   if (url.pathname === "/autopilot/earn") return { status: 200, data: { slp: await slpInfo(Date.now()) } };
@@ -1085,6 +1100,7 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
       recentTransfers(client),
       Promise.all([client.subscriptions("active", true), client.subAccounts()]).then(([a, s]) => parkedOf(u!, s, a)).catch(() => []),
       live,
+      readFlows(u!, client, now), // with the balance: a deposit Strike just credited is never shown as profit
     ]);
     const slp = vaults?.data.positions?.find((p) => p.vault_id === SLP_ID);
     return {

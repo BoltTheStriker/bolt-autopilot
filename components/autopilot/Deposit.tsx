@@ -4,7 +4,7 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState } from "react";
 import { walletBalance, type InstalledWallet } from "@/lib/wallet";
-import { I } from "./steps";
+import { DepositHint, I } from "./steps";
 import { MoneyPath } from "./strike";
 import { TokenDeposit, type SwapApi } from "./TokenDeposit";
 
@@ -40,6 +40,7 @@ export function DepositModal({
   onDeposit,
   onClose,
   swapApi,
+  adaUsd,
 }: {
   open: boolean;
   wallets: InstalledWallet[];
@@ -48,8 +49,9 @@ export function DepositModal({
   onDeposit: (key: string, ada: number, onStage: (s: DepositStage) => void) => Promise<string | null>;
   onClose: () => void;
   swapApi?: SwapApi | null; // "Other token": swap a wallet token to ADA through SteelSwap first
+  adaUsd?: number | null; // to show each amount in dollars
 }) {
-  const [ada, setAda] = useState("250");
+  const [ada, setAda] = useState("500");
   const [tab, setTab] = useState<"ada" | "token">("ada");
   // The remembered wallet when there is one (a single entry); otherwise the user's pick, or the first.
   const [picked, setKey] = useState<string | null>(null);
@@ -146,7 +148,7 @@ export function DepositModal({
                     )}
 
                     <div className="mt-4 flex flex-wrap gap-2">
-                      {[100, 250, 500, 1000].map((v) => (
+                      {[250, 500, 1000, 2000].map((v) => (
                         <button
                           key={v}
                           onClick={() => setAda(String(v))}
@@ -166,6 +168,7 @@ export function DepositModal({
                       )}
                     </label>
                     <p className="mt-2 text-xs text-muted">{held === null ? "Reading your wallet…" : `In your wallet: ${held.toLocaleString("en-US", { maximumFractionDigits: 2 })} ₳`}</p>
+                <DepositHint ada={value || 0} adaUsd={adaUsd} />
 
                     {error && <p className="mt-3 rounded-xl bg-neg/10 px-3 py-2 text-sm text-neg">{error}</p>}
                     <button

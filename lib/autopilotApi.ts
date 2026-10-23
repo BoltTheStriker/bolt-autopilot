@@ -54,7 +54,7 @@ export type SlpInfo = {
   susdrf: { yieldApr: number; price: number; openLines: number; collateral: number; debt: number; referenceLoss: number } | null;
 };
 export type WithdrawQuote = { withdrawId: string; fee: number; messageToSign: string; txCbor: string | null };
-export type AutoStatus = { open: boolean; ready?: boolean; network: "testnet" | "mainnet"; maxBudgetUsd: number; traders: number; copilot?: boolean };
+export type AutoStatus = { open: boolean; ready?: boolean; network: "testnet" | "mainnet"; maxBudgetUsd: number; traders: number; copilot?: boolean; adaUsd?: number | null };
 /** What the copilot sees of the app (it can only propose; the user applies). */
 export type CopilotContext = {
   demo: boolean;
