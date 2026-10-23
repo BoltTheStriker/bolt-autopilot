@@ -664,7 +664,7 @@ export function AutopilotApp() {
   // "Other token" deposits: SteelSwap swaps a wallet token to ADA first (the server holds the key).
   const swapApi = useMemo<SwapApi | null>(
     () =>
-      session && site.tokenDeposits
+      session && (site.tokenDeposits === true || (site.tokenDeposits === "admin" && admin))
         ? {
             tokens: (units) => autopilot.swapTokens(session, units).then((r) => r.tokens),
             quote: (unit, amount) => autopilot.swapQuote(session, unit, amount),
@@ -672,7 +672,7 @@ export function AutopilotApp() {
             notify: (hash, tx) => autopilot.swapNotify(session, hash, tx),
           }
         : null,
-    [session],
+    [session, admin],
   );
 
   // RealFi actions for a real, connected account (the demo shows the numbers only).
