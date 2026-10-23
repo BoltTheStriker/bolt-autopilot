@@ -19,7 +19,7 @@ import { CUP_MIN_HOLDING, cupStandings, cupToCheck, freshJoinTime, joinCup, join
 import { verifySignData } from "./cose.ts";
 import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, fitting, sharedRules, MIN_COPY_USD, pausedNow, perCopyUsd, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type AutoRules, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
 import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, newSession, publicUser, saveAutoStore, type AutoUser, type Mode } from "./autopilotStore.ts";
-import { steelBuild, steelNotify, steelOn, steelQuote, steelTokens } from "./steelswap.ts";
+import { steelBuild, steelLogo, steelNotify, steelOn, steelQuote, steelTokens } from "./steelswap.ts";
 import { copiesNow, parkedOf, readFlows, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { copilotReply, type ChatTurn } from "./copilot.ts";
@@ -1661,6 +1661,18 @@ createServer(async (req, res) => {
     }, "admin"));
     res.statusCode = out.status;
     res.end(JSON.stringify(out.data));
+  } else if (req.url?.startsWith("/autopilot/swap/logo/") && req.method === "GET") {
+    const logo = await steelLogo(req.url.slice("/autopilot/swap/logo/".length)).catch(() => null);
+    if (!logo) {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+    res.setHeader("content-type", logo.type);
+    res.setHeader("cache-control", "public, max-age=604800");
+    res.setHeader("x-content-type-options", "nosniff");
+    if (logo.type === "image/svg+xml") res.setHeader("content-security-policy", "default-src 'none'; style-src 'unsafe-inline'"); // no scripts in an SVG
+    res.end(logo.body);
   } else if (req.url?.startsWith("/autopilot")) {
     res.setHeader("content-type", "application/json");
     const url = new URL(req.url, "http://worker");

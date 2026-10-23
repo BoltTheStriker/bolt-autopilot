@@ -1,9 +1,11 @@
 "use client";
 
 // Deposit with any Cardano token: pick one from the wallet, SteelSwap swaps it to ADA in the wallet (one signature, their
-// fee included), Bolt watches for the ADA to land, then it goes to Strike as a normal ADA deposit (the second signature).
-import { useEffect, useState } from "react";
+// fee included), Bolt watches for the ADA to land, then sends it straight on to Strike as a normal ADA deposit: the
+// wallet asks for the second signature by itself.
+import { useEffect, useRef, useState } from "react";
 import type { SwapQuote, WalletToken } from "@/lib/autopilotApi";
+import { site } from "@/lib/config";
 import { signSubmitTx, walletBalance, walletUtxos } from "@/lib/wallet";
 
 export type SwapApi = {
@@ -26,6 +28,9 @@ function toUnits(text: string, d: number): string | null {
   return units > 0n ? units.toString() : null;
 }
 
+/** What goes on to Strike once the swap lands: the ADA that arrived, less a little for fees and change. */
+const toDeposit = (arrived: number) => Math.max(5, arrived - 3);
+
 export function TokenDeposit({ walletKey, api, onAdaReady }: { walletKey: string | null; api: SwapApi; onAdaReady: (ada: number) => void }) {
   const [list, setList] = useState<Held[] | null>(null);
   const [err, setErr] = useState("");
@@ -34,6 +39,11 @@ export function TokenDeposit({ walletKey, api, onAdaReady }: { walletKey: string
   const [quote, setQuote] = useState<{ key: string; q: SwapQuote } | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [phase, setPhase] = useState<Phase>({ kind: "pick" });
+  // The latest callback, for the arrival check (keeping it out of the effect's deps stops refreshes restarting the timer).
+  const ready = useRef(onAdaReady);
+  useEffect(() => {
+    ready.current = onAdaReady;
+  });
 
   // What the wallet holds, with names and ADA value (tokens worth under ₳5 are left out: fees would eat them).
   useEffect(() => {
@@ -65,7 +75,10 @@ export function TokenDeposit({ walletKey, api, onAdaReady }: { walletKey: string
       walletBalance(walletKey).then(
         (b) => {
           const now = Number(b.lovelace);
-          if (now >= phase.before + phase.expected * 0.7) setPhase({ kind: "arrived", ada: Math.max(0, Math.floor((now - phase.before) / 1e6)), hash: phase.hash });
+          if (now < phase.before + phase.expected * 0.7) return;
+          const arrived = Math.max(0, Math.floor((now - phase.before) / 1e6));
+          setPhase({ kind: "arrived", ada: arrived, hash: phase.hash });
+          ready.current(toDeposit(arrived)); // straight on to Strike: the wallet asks for the deposit signature
         },
         () => {},
       );
@@ -114,15 +127,15 @@ export function TokenDeposit({ walletKey, api, onAdaReady }: { walletKey: string
         <h3 className="mt-4 font-display text-xl font-semibold">{phase.kind === "arrived" ? `₳${phase.ada} arrived in your wallet` : "Swapping to ADA…"}</h3>
         <p className="mt-2 text-sm text-soft">
           {phase.kind === "arrived"
-            ? "Now send it to your Strike account: one more signature."
-            : `The DEX fills your order in a block or a few (usually 1 to 5 minutes). About ₳${ada(phase.expected)} is on its way to your wallet; this updates by itself.`}
+            ? "Confirm the deposit to your Strike account in your wallet."
+            : `The DEX fills your order in a block or a few (usually 1 to 5 minutes). About ₳${ada(phase.expected)} is on its way to your wallet; then your wallet asks you to confirm the deposit to Strike.`}
         </p>
         <a href={`https://cardanoscan.io/transaction/${phase.hash}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-muted hover:text-white">
           View the swap on Cardanoscan ↗
         </a>
         {phase.kind === "arrived" && (
-          <button onClick={() => onAdaReady(Math.max(5, phase.ada - 3))} className="mt-5 w-full rounded-full bg-mint py-3 font-semibold text-ink transition hover:bg-mint-2">
-            Deposit ₳{Math.max(5, phase.ada - 3)} to Strike
+          <button onClick={() => onAdaReady(toDeposit(phase.ada))} className="mt-5 w-full rounded-full bg-mint py-3 font-semibold text-ink transition hover:bg-mint-2">
+            Deposit ₳{toDeposit(phase.ada)} to Strike
           </button>
         )}
       </div>
@@ -141,8 +154,12 @@ export function TokenDeposit({ walletKey, api, onAdaReady }: { walletKey: string
                 onClick={() => (setPick(t), setAmount(""), setQuote(null))}
                 className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm transition ${pick?.unit === t.unit ? "bg-mint/10 ring-1 ring-mint/40" : "hover:bg-white/[0.05]"}`}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                {t.logoUrl ? <img src={t.logoUrl} alt="" className="size-7 rounded-full bg-white/10" /> : <span className="size-7 rounded-full bg-white/10" />}
+                {t.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={t.logoUrl.startsWith("/") ? `${site.botApi}${t.logoUrl}` : t.logoUrl} alt="" onError={(e) => e.currentTarget.removeAttribute("src")} className="size-7 rounded-full bg-white/10 object-cover" />
+                ) : (
+                  <span className="size-7 rounded-full bg-white/10" />
+                )}
                 <span className="min-w-0 flex-1">
                   <span className="block font-semibold">{t.ticker ?? t.name ?? "Token"}</span>
                   <span className="block font-mono text-[11px] text-muted">{fmtQty(t.qty, t.decimals)}</span>
@@ -199,7 +216,7 @@ export function TokenDeposit({ walletKey, api, onAdaReady }: { walletKey: string
       >
         {phase.kind === "sign" ? "Check your wallet…" : q ? `Swap to ₳${ada(q.outputLovelace)}` : "Swap to ADA"}
       </button>
-      <p className="mt-3 text-center text-[11px] text-white/40">Step 1 of 2: swap to ADA in your wallet (SteelSwap). Step 2: deposit the ADA to Strike.</p>
+      <p className="mt-3 text-center text-[11px] text-white/40">Two signatures: the swap to ADA now (SteelSwap), then the deposit to Strike, which your wallet asks for as soon as the ADA arrives.</p>
     </div>
   );
 }

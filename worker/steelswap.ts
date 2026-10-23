@@ -37,9 +37,31 @@ export async function steelTokens(units: string[]): Promise<WalletToken[]> {
   const byUnit = new Map(meta.tokens.map((t) => [t.unit, t]));
   return list.map((unit) => {
     const t = byUnit.get(unit);
-    const logo = t?.logoUrl ? (t.logoUrl.startsWith("http") ? t.logoUrl : `https://api.steelswap.io${t.logoUrl}`) : null;
+    // SteelSwap's image links refuse other sites (hotlink protection), so logos come through this server instead.
+    const logo = t?.logoUrl ? `/autopilot/swap/logo/${unit}` : null;
     return { unit, ticker: t?.ticker ?? null, name: t?.name ?? null, decimals: t?.decimalsKnown ? t.decimals : 0, logoUrl: logo, priceAda: Number.isFinite(prices[unit]) ? prices[unit] : null };
   });
+}
+
+// Logos: SteelSwap sends each one inline (base64) through the API; kept in memory, misses included.
+const logos = new Map<string, { type: string; body: Buffer } | null>();
+let logoWindow = { start: 0, count: 0 };
+const IMAGE_TYPES: [string, string][] = [["iVBOR", "image/png"], ["/9j/", "image/jpeg"], ["R0lG", "image/gif"], ["UklG", "image/webp"], ["PHN2", "image/svg+xml"], ["PD94", "image/svg+xml"]];
+
+/** A token's logo as image bytes, or null when it has none. Uncached lookups are capped at 60 a minute. */
+export async function steelLogo(unit: string, now = Date.now()): Promise<{ type: string; body: Buffer } | null> {
+  if (!/^[0-9a-f]{56,120}$/.test(unit)) return null;
+  if (logos.has(unit)) return logos.get(unit)!;
+  if (now - logoWindow.start > 60_000) logoWindow = { start: now, count: 0 };
+  if (++logoWindow.count > 60) return null;
+  const meta = await call<{ tokens: { unit: string; logoUrl?: string | null }[] }>("/tokens/metadata", { units: [unit] }).catch(() => null);
+  if (!meta) return null; // SteelSwap down: don't remember the miss
+  const b64 = meta.tokens.find((t) => t.unit === unit)?.logoUrl ?? "";
+  const type = IMAGE_TYPES.find(([p]) => b64.startsWith(p))?.[1];
+  const logo = type ? { type, body: Buffer.from(b64, "base64") } : null;
+  if (logos.size >= 500) logos.delete(logos.keys().next().value!);
+  logos.set(unit, logo);
+  return logo;
 }
 
 type Amount = { unit: string; amount: string };

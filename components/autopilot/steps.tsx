@@ -207,7 +207,7 @@ export function FundCard({
       )}
       {tab === "token" && swapApi ? (
         <div className="max-w-xl">
-          <TokenDeposit walletKey={key} api={swapApi} onAdaReady={(n) => (setAda(n), setTab("ada"))} />
+          <TokenDeposit walletKey={key} api={swapApi} onAdaReady={(n) => (setAda(n), setTab("ada"), key && onDeposit(key, n))} />
         </div>
       ) : (
         <>

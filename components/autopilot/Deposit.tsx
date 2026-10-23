@@ -82,11 +82,11 @@ export function DepositModal({
     setSent(null);
     onClose();
   };
-  const deposit = async () => {
+  const deposit = async (amount = value) => {
     if (!key) return;
-    const hash = await onDeposit(key, value, setStage);
+    const hash = await onDeposit(key, amount, setStage);
     if (hash) {
-      setSent({ ada: value, hash });
+      setSent({ ada: amount, hash });
       setStage("done");
     } else setStage(null); // back to the form, which shows the error
   };
@@ -132,7 +132,7 @@ export function DepositModal({
                   </div>
                 )}
                 {tab === "token" && swapApi ? (
-                  <TokenDeposit walletKey={key} api={swapApi} onAdaReady={(n) => (setAda(String(n)), setTab("ada"), setHeld(null))} />
+                  <TokenDeposit walletKey={key} api={swapApi} onAdaReady={(n) => (setAda(String(n)), setTab("ada"), setHeld(null), void deposit(n))} />
                 ) : (
                   <>
                     <MoneyPath direction="in" className="mt-4" />
