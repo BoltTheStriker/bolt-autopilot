@@ -18,6 +18,29 @@ const money = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigi
 const signed = (v: number) => `${v >= 0 ? "+" : "−"}${money(Math.abs(v))}`;
 const SUGGEST = ["Steady growth, stocks and gold, never lose more than 10%", "Balanced: crypto and stocks", "Go for growth, I can take swings"];
 
+/** A soft, repeating pulse around the button to press next, so the phone reads as something to tap, not a picture. */
+function Nudge({ radius }: { radius: string }) {
+  return (
+    <motion.span
+      aria-hidden="true"
+      className={`pointer-events-none absolute -inset-px border-2 border-mint ${radius}`}
+      initial={{ opacity: 0.7, scale: 1 }}
+      animate={{ opacity: 0, scale: 1.07 }}
+      transition={{ duration: 1.6, repeat: Infinity, ease: "easeOut" }}
+    />
+  );
+}
+
+/** A finger-tap marker: a dot with a ripple, looping, until the visitor touches the phone. */
+function TapHint() {
+  return (
+    <span aria-hidden="true" className="pointer-events-none absolute top-1/2 right-5 grid size-10 -translate-y-1/2 place-items-center">
+      <motion.span className="absolute size-10 rounded-full bg-mint/40" initial={{ scale: 0.4, opacity: 0.9 }} animate={{ scale: 1.6, opacity: 0 }} transition={{ duration: 1.4, repeat: Infinity, ease: "easeOut" }} />
+      <motion.span className="size-4 rounded-full bg-white shadow-[0_0_0_4px_rgba(78,250,176,0.6)]" animate={{ scale: [1, 0.8, 1] }} transition={{ duration: 1.4, repeat: Infinity, times: [0, 0.15, 0.4] }} />
+    </span>
+  );
+}
+
 // When the copilot can't answer (busy, or off), a plain reading of the same asks.
 function fallback(text: string): Msg {
   const t = text.toLowerCase();
@@ -33,6 +56,7 @@ function fallback(text: string): Msg {
 
 export function WalletConcept() {
   const [tab, setTab] = useState<Tab>("home");
+  const [touched, setTouched] = useState(false); // the tap hint shows until the first touch on the phone
   const [stage, setStage] = useState<Stage>("intro");
   const [traders, setTraders] = useState<PreviewTrader[]>([]);
   const [marks, setMarks] = useState<Record<string, LiveMark>>({});
@@ -103,9 +127,16 @@ export function WalletConcept() {
 
   return (
     <div className="relative mx-auto w-[360px] max-w-full">
+      <p className="mb-4 flex items-center justify-center gap-2 text-center text-[12px] font-semibold text-soft">
+        <span className="relative flex size-2">
+          <span className="absolute inset-0 animate-ping rounded-full bg-mint/70" />
+          <span className="relative size-2 rounded-full bg-mint" />
+        </span>
+        {touched ? "Live: the real copilot, Bolt's real picks" : "Interactive · tap the phone to try it"}
+      </p>
       {/* The phone: its height follows the window (never taller than the screen), fixed so nothing jumps on a tap. */}
       <div className="relative rounded-[56px] bg-[#1a1f27] p-3.5 shadow-[0_50px_120px_rgba(0,0,0,0.65),inset_0_0_0_2px_rgba(255,255,255,0.09)]">
-        <div className="relative flex flex-col overflow-hidden rounded-[44px] bg-[#0b0d11] text-[13.5px]" style={{ height: "min(760px, max(560px, calc(100dvh - 190px)))" }}>
+        <div onPointerDown={() => setTouched(true)} className="relative flex flex-col overflow-hidden rounded-[44px] bg-[#0b0d11] text-[13.5px]" style={{ height: "min(760px, max(560px, calc(100dvh - 190px)))" }}>
           <div className="absolute top-2.5 left-1/2 z-50 h-7 w-28 -translate-x-1/2 rounded-full bg-black" />
           <div className="flex shrink-0 items-center justify-between px-5 pt-14">
             <div className="flex items-center gap-2.5">
@@ -119,7 +150,7 @@ export function WalletConcept() {
           </div>
 
           <div ref={list} className="relative min-h-0 flex-1 overflow-y-auto px-5 pt-4 pb-4 [scrollbar-width:none]">
-            {tab === "home" && <Home value={value} running={!!live} onTrade={() => setTab("trade")} />}
+            {tab === "home" && <Home value={value} running={!!live} hint={!touched} onTrade={() => setTab("trade")} />}
             {tab === "activity" && <Activity log={live?.d.log ?? []} />}
             {tab === "trade" && stage === "intro" && (
               <div>
@@ -136,7 +167,8 @@ export function WalletConcept() {
                     </div>
                   ))}
                 </div>
-                <button onClick={() => setStage("sign")} className="mt-5 w-full rounded-[14px] bg-mint py-3.5 font-semibold text-ink">
+                <button onClick={() => setStage("sign")} className="relative mt-5 w-full rounded-[14px] bg-mint py-3.5 font-semibold text-ink">
+                  <Nudge radius="rounded-[14px]" />
                   Open my Strike account
                 </button>
                 <p className="mt-2 text-center text-[11px] text-[#8a96a8]">Concept: practice money, nothing is signed.</p>
@@ -284,7 +316,8 @@ export function WalletConcept() {
                   <div className="mt-4 rounded-2xl bg-white/[0.04] p-3.5 text-[12.5px] leading-relaxed text-[#dfe6ef]">
                     Open your Strike account and start your bot. <span className="text-white">No transaction, no fee.</span> The bot can trade but never withdraw.
                   </div>
-                  <button onClick={() => setStage("chat")} className="mt-4 w-full rounded-[14px] bg-mint py-3.5 font-semibold text-ink">
+                  <button onClick={() => setStage("chat")} className="relative mt-4 w-full rounded-[14px] bg-mint py-3.5 font-semibold text-ink">
+                    <Nudge radius="rounded-[14px]" />
                     Sign · Face ID
                   </button>
                   <button onClick={() => setStage("intro")} className="mt-1 w-full py-2.5 text-[13px] text-[#8a96a8]">
@@ -301,7 +334,7 @@ export function WalletConcept() {
   );
 }
 
-function Home({ value, running, onTrade }: { value: number; running: boolean; onTrade: () => void }) {
+function Home({ value, running, hint, onTrade }: { value: number; running: boolean; hint: boolean; onTrade: () => void }) {
   return (
     <div>
       <p className="text-[12px] text-[#8a96a8]">Total balance</p>
@@ -313,7 +346,9 @@ function Home({ value, running, onTrade }: { value: number; running: boolean; on
           </span>
         ))}
       </div>
-      <button onClick={onTrade} className="mt-4 w-full rounded-[22px] border border-mint/45 bg-gradient-to-br from-[#10302a] to-[#0c1714] p-4 text-left">
+      <button onClick={onTrade} className="relative mt-4 w-full rounded-[22px] border border-mint/45 bg-gradient-to-br from-[#10302a] to-[#0c1714] p-4 pr-16 text-left">
+        {!running && <Nudge radius="rounded-[22px]" />}
+        {hint && <TapHint />}
         <p className="font-mono text-[10px] tracking-wider text-mint uppercase">{running ? "Your Autopilot" : "New · Trade"}</p>
         <p className="mt-1 text-[15px] font-semibold">{running ? `${money(value)} · ${signed(value - DEMO_BALANCE)}` : "Copy Strike's best traders, on autopilot"}</p>
         <p className="mt-0.5 text-[12px] text-[#8a96a8]">{running ? "Practice money, live traders" : "Your goal, your limits, one signature →"}</p>
@@ -378,11 +413,19 @@ export function WalletConceptPage() {
             </li>
           ))}
         </ul>
-        <a href={site.socials.x} target="_blank" rel="noreferrer" className="mt-8 inline-flex rounded-full bg-mint px-6 py-3 font-semibold text-ink transition hover:bg-mint-2">
-          Wallet teams: let&apos;s talk →
-        </a>
+        <div className="mt-8 flex flex-wrap gap-3">
+          {/* Small screens stack the phone below all this: a way straight to it. */}
+          <a href="#phone" className="inline-flex rounded-full bg-mint px-6 py-3 font-semibold text-ink transition hover:bg-mint-2 lg:hidden">
+            Try it ↓
+          </a>
+          <a href={site.socials.x} target="_blank" rel="noreferrer" className="inline-flex rounded-full bg-mint px-6 py-3 font-semibold text-ink transition hover:bg-mint-2 max-lg:bg-white/10 max-lg:text-white">
+            Wallet teams: let&apos;s talk →
+          </a>
+        </div>
       </div>
-      <WalletConcept />
+      <div id="phone" className="scroll-mt-24">
+        <WalletConcept />
+      </div>
     </main>
   );
 }
