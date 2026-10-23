@@ -337,6 +337,12 @@ export function AutopilotApp() {
           : user.mode === "off" && !hasStarted
             ? 3
             : 4;
+  // A new screen (a setup step, or the rules form opening or closing) starts at the top, not wherever the last one
+  // was scrolled to.
+  const screen = `${step}:${editing}`;
+  useEffect(() => {
+    window.scrollTo({ top: 0 });
+  }, [screen]);
   // Connected a wallet account Bolt hasn't set up, while this browser knows one that has a dashboard: point to it.
   const known = useKnownAccounts();
   const [newAccountOk, setNewAccountOk] = useState<string | null>(null);
@@ -857,15 +863,15 @@ export function AutopilotApp() {
                         onShare={view.copies.length > 0 ? () => setShare(shareNow()) : undefined}
                       />
                       <div className="grid gap-4 xl:grid-cols-2">
-                        <HolderPerks walletKey={walletKey} demo={demoOn} />
-                        <BoltVaultSoon />
-                      </div>
-                      <div className="grid gap-4 xl:grid-cols-2">
                         <TradersList v={view} limit={3} onSwap={(l) => void swapTrader(l)} swapping={swappingLead} />
                         <div className="space-y-4">
                           <Allocation v={view} apr={slp?.apr ?? null} />
                           <Activity v={view} limit={4} fresh={fresh} />
                         </div>
+                      </div>
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <HolderPerks walletKey={walletKey} demo={demoOn} />
+                        <BoltVaultSoon />
                       </div>
                     </>
                   )}

@@ -47,7 +47,12 @@ ${levels}
   - pauseUntil: "pause until Monday", "pause for 6 hours": an ISO 8601 UTC time (work it out from "Now" in the app state). Copies close now and the bot picks up again by itself at that time. null = not paused (use it to resume early).
   - weekdaysOnly: "don't trade on weekends": copies close for Saturday and Sunday (UTC) and the bot picks up again on Monday.
   - avoid: traders never to copy ("never copy that one again"), as their addresses exactly as the app state shows them. The bot stops any copy of them and picks someone else. Keep the ones already in the list unless the user asks to remove them.
-- Actions (call propose_action; the app shows one button, nothing happens until the user taps it): "stop the bot" / "close everything" → stop (every copy closes at market); "start" / "turn it back on" → start; "switch to Autopilot" → autopilot; "back to my own rules" → follow_rules. Use these for switching, not propose_rules.
+- Actions (call propose_action; the app shows one button, nothing happens until the user taps it): "stop the bot" / "close everything" → stop (every copy closes at market); "start" / "turn it back on" → start; "switch to Autopilot" → autopilot; "back to my own rules" → follow_rules. Use these for switching, not propose_rules. Only offer an action that changes something: never start when the app state says the bot is running, never stop when it's off.
+- Stop now, or stop later? A stop that depends on a number is a stop target, not an action: the bot keeps running and stops itself when the number is reached. Propose it at once with propose_rules; don't ask first and don't offer the stop button.
+  - "when I'm down $1.20, stop the bot", "stop if I lose 5 bucks", "cut it at −$3", "stop at $3 loss" → stopAtLossUsd (1.2, 5, 3).
+  - "stop when I'm up $20", "take profit at $50 total" → stopAtProfitUsd. "stop for today once I make $10" → dailyProfitUsd.
+  - "stop the bot", "stop now", "close everything" (no number) → the stop action.
+  - Check the target against "Profit since Start" in the app state. If it's already reached (asked to stop at −$3 and it's at −$3.40), say the bot would stop at the next check, about 2 minutes after Apply. If it's close, say how close.
 - "How am I doing?": answer from the app state (profit since Start, today, each copy's profit, the best and the worst), in plain numbers. Never guess numbers that aren't there.
 - Two ways to run: "Follow my rules" (the bot copies its best picks for the rules and keeps them while they stay in its ranking) or "Autopilot" (Bolt's AI also looks after the setup: it can stop copying a trader who left the ranking or is failing with a poor week, step risk down after losses near the daily limit, and step back to the user's own settings on a calm day). Autopilot never goes beyond the user's own settings (risk, budget, leverage, stop-loss, daily limit, markets) and never touches withdrawals; every change it makes appears in the activity feed with the reason. Switching back to "Follow my rules" undoes its changes.
 - Rule changes apply to new copies. A copy that's already running keeps the settings it started with (its size, boost, stop-loss and leverage) until the bot replaces it, or the user stops and starts the bot. When someone changes those while copies are running, say so in one sentence and that stopping and starting applies it now. Targets, pauses, the schedule and blocked traders apply right away.
@@ -130,6 +135,16 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   },
 ];
 
+/** Why an action would do nothing in the bot's current state (a Start button on a running bot), or null when it fits. */
+export function actionPointless(a: CopilotAction, mode: CopilotContext["mode"]): string | null {
+  if (!mode) return null;
+  if (a === "start" && mode !== "off") return "The bot is already running.";
+  if (a === "stop" && mode === "off") return "The bot is already off.";
+  if (a === "autopilot" && mode === "autopilot") return "The bot is already in Autopilot.";
+  if (a === "follow_rules" && mode === "on") return "The bot already follows the user's rules.";
+  return null;
+}
+
 const money = (v: number) => `${v >= 0 ? "+" : "−"}$${Math.abs(v).toFixed(2)}`;
 
 function contextNote(c: CopilotContext): string {
@@ -208,6 +223,8 @@ export async function copilotReply(client: Anthropic, history: ChatTurn[], ctx: 
         } else if (call.name === "propose_action") {
           const a = (call.input as { action?: string }).action;
           if (a !== "start" && a !== "stop" && a !== "autopilot" && a !== "follow_rules") throw new Error("Unknown action.");
+          const pointless = actionPointless(a, ctx.mode);
+          if (pointless) throw new Error(`${pointless} Don't show this button. If the user wants the bot to stop once a number is reached, propose a stop target with propose_rules.`);
           action = a;
           results.push({ type: "tool_result", tool_use_id: call.id, content: `Shown to the user as a button (nothing happens until they tap it): ${a}.` });
         } else if (call.name === "get_traders") {

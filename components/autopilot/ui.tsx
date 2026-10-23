@@ -16,13 +16,15 @@ export function ChoiceCards<T extends string>({ value, options, onChange, column
             role="radio"
             aria-checked={on}
             onClick={() => onChange(o.id)}
-            className={`group relative rounded-2xl border p-4 text-left transition ${on ? "border-mint/60 bg-mint/[0.09] shadow-[0_0_0_1px_rgba(78,250,176,0.25)]" : "border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.05]"}`}
+            className={`group @container relative min-w-0 rounded-2xl border p-4 text-left transition ${on ? "border-mint/60 bg-mint/[0.09] shadow-[0_0_0_1px_rgba(78,250,176,0.25)]" : "border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.05]"}`}
           >
+            {/* A narrow card (three across) puts the title under the icon, so it never collides with the radio dot. */}
             <span className="flex items-center gap-2">
-              {o.icon && <span className={`grid size-7 place-items-center rounded-lg ${on ? "bg-mint text-ink" : "bg-white/[0.06] text-soft"}`}>{o.icon}</span>}
-              <span className="font-display font-semibold">{o.title}</span>
+              {o.icon && <span className={`grid size-7 shrink-0 place-items-center rounded-lg ${on ? "bg-mint text-ink" : "bg-white/[0.06] text-soft"}`}>{o.icon}</span>}
+              <span className="hidden font-display font-semibold @3xs:inline">{o.title}</span>
               <span className={`ml-auto size-4 shrink-0 rounded-full border-2 transition ${on ? "border-mint bg-mint shadow-[inset_0_0_0_3px_#0a0a0a]" : "border-white/25"}`} />
             </span>
+            <span className="mt-2 block font-display font-semibold @3xs:hidden">{o.title}</span>
             <span className="mt-1.5 block text-xs leading-relaxed text-muted">{o.desc}</span>
           </button>
         );

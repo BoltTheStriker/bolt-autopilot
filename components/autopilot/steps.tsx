@@ -288,9 +288,9 @@ function TargetField({ label, sign, value, placeholder, onChange }: { label: str
     setText(value === null ? "" : String(value));
   }
   return (
-    <label className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-sm">
+    <label className="block rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-sm">
       <span className="text-soft">{label}</span>
-      <span className="flex shrink-0 items-center gap-1 font-mono">
+      <span className="mt-1.5 flex items-center gap-1.5 rounded-lg border border-white/10 bg-ink/40 px-2.5 py-1 font-mono focus-within:border-mint/50">
         <span className="whitespace-nowrap text-muted">{sign}$</span>
         <input
           inputMode="decimal"
@@ -299,8 +299,9 @@ function TargetField({ label, sign, value, placeholder, onChange }: { label: str
           onChange={(e) => setText(e.target.value)}
           onBlur={() => onChange(Number(text) >= 1 ? Number(text) : null)}
           aria-label={label}
-          className="w-20 rounded-lg border border-white/10 bg-ink/40 px-2 py-1 text-right outline-none placeholder:text-white/25 focus:border-mint/50"
+          className="w-full min-w-0 bg-transparent outline-none placeholder:text-white/25"
         />
+        {value === null && <span className="shrink-0 font-sans text-[11px] text-white/30">off</span>}
       </span>
     </label>
   );
@@ -407,9 +408,9 @@ export function RulesCard({
               <Slider label="Stop a copy at" value={r.stopLossPct} min={0.05} max={level.stopLossPct} step={0.01} format={(v) => `−${Math.round(v * 100)}%`} onChange={(stopLossPct) => set({ stopLossPct })} />
               <Slider label="Daily loss limit" value={r.dailyLossPct} min={0.03} max={level.dailyLossPct} step={0.01} format={(v) => `−${Math.round(v * 100)}%`} hint="Everything stops until tomorrow" onChange={(dailyLossPct) => set({ dailyLossPct })} />
               <div>
-                <label className="flex items-center justify-between text-sm">
+                <label className="flex items-center justify-between gap-3 text-sm">
                   <span className="text-soft">Lock in profits</span>
-                  <input type="checkbox" checked={r.profitLockPct !== null} onChange={(e) => set({ profitLockPct: e.target.checked ? 0.15 : null })} className="size-4 accent-[#4efab0]" />
+                  <input type="checkbox" checked={r.profitLockPct !== null} onChange={(e) => set({ profitLockPct: e.target.checked ? 0.15 : null })} className="size-4 shrink-0 accent-[#4efab0]" />
                 </label>
                 {r.profitLockPct !== null && (
                   <div className="mt-2">
@@ -418,11 +419,9 @@ export function RulesCard({
                 )}
               </div>
               <div>
-                <p className="flex items-center justify-between text-sm">
-                  <span className="text-soft">Copy size (boost)</span>
-                  <span className="font-mono text-xs text-muted">up to {level.maxBoost}× on {r.risk} risk</span>
-                </p>
-                <div className="mt-2 inline-flex rounded-full bg-white/[0.05] p-1 text-xs">
+                <p className="text-sm text-soft">Copy size (boost)</p>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                <div className="inline-flex rounded-full bg-white/[0.05] p-1 text-xs">
                   {[1, 2, 3].map((b) => (
                     <button
                       key={b}
@@ -434,13 +433,15 @@ export function RulesCard({
                     </button>
                   ))}
                 </div>
+                <span className="text-[11px] text-muted">up to {level.maxBoost}× on {r.risk} risk</span>
+                </div>
                 <p className="mt-1.5 text-[11px] text-white/40">2× trades twice the trader&apos;s size for its money: gains and losses both double. The stop-loss still caps each copy.</p>
               </div>
               <div className="space-y-3">
                 <TargetField label="Stop the day when up" sign="+" value={r.dailyProfitUsd ?? null} placeholder="10" onChange={(dailyProfitUsd) => set({ dailyProfitUsd })} />
-                <label className="flex items-center justify-between text-sm">
+                <label className="flex items-center justify-between gap-3 text-sm">
                   <span className="text-soft">Weekdays only (no copies on weekends)</span>
-                  <input type="checkbox" checked={!!r.weekdaysOnly} onChange={(e) => set({ weekdaysOnly: e.target.checked })} className="size-4 accent-[#4efab0]" />
+                  <input type="checkbox" checked={!!r.weekdaysOnly} onChange={(e) => set({ weekdaysOnly: e.target.checked })} className="size-4 shrink-0 accent-[#4efab0]" />
                 </label>
               </div>
             </div>

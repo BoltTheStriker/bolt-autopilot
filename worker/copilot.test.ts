@@ -73,3 +73,20 @@ test("history is trimmed to plain text turns that start with the user", async ()
   assert.equal(msgs[0].content.length, 1200);
   await assert.rejects(copilotReply(client, [{ role: "assistant", text: "hello" }], ctx, data), /Send a message first/);
 });
+
+test("a Start button on a running bot is refused, so the model proposes the stop target instead", async () => {
+  const { client, seen } = fakeClient([
+    { stop_reason: "tool_use", content: [{ type: "tool_use", id: "a", name: "propose_action", input: { action: "start" } }] as Anthropic.Beta.BetaContentBlock[] },
+    {
+      stop_reason: "tool_use",
+      content: [{ type: "tool_use", id: "b", name: "propose_rules", input: { ...defaultRules(1000), stopAtLossUsd: 1.2 } }] as Anthropic.Beta.BetaContentBlock[],
+    },
+    { content: [{ type: "text", text: "Got it: the bot keeps running and stops itself at −$1.20." }] as Anthropic.Beta.BetaContentBlock[] },
+  ]);
+  const out = await copilotReply(client, [{ role: "user", text: "when im down 1.2$ can you stop the bot?" }], { ...ctx, mode: "on" }, data);
+  assert.equal(out.action, null);
+  assert.equal(out.proposal?.stopAtLossUsd, 1.2);
+  const refusal = ((seen[1].messages as { content: unknown }[]).at(-1)!.content as { content: string; is_error?: boolean }[])[0];
+  assert.equal(refusal.is_error, true);
+  assert.match(refusal.content, /already running/);
+});
