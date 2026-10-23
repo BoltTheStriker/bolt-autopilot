@@ -1190,7 +1190,12 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
       return { status: 200, data: { ok: true } };
     }
     try {
-      if (what === "tokens") return { status: 200, data: { tokens: await steelTokens(Array.isArray(body.units) ? (body.units as unknown[]).map(String) : []) } };
+      if (what === "tokens") {
+        // Full logo addresses on this server, so any version of the page loads them from here.
+        const origin = `https://${String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "api.boltstriker.io").split(",")[0].trim()}`;
+        const tokens = await steelTokens(Array.isArray(body.units) ? (body.units as unknown[]).map(String) : []);
+        return { status: 200, data: { tokens: tokens.map((t) => (t.logoUrl?.startsWith("/") ? { ...t, logoUrl: `${origin}${t.logoUrl}` } : t)) } };
+      }
       const unit = String(body.unit ?? "");
       const amount = String(body.amount ?? "");
       if (!/^[0-9a-f]{56,120}$/.test(unit) || !/^[1-9][0-9]{0,30}$/.test(amount)) return { status: 400, data: { error: "Pick a token and an amount." } };
