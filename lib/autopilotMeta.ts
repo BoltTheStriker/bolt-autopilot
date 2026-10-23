@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 // Titles, descriptions and the link preview for Bolt Autopilot's pages (autopilot.boltstriker.io).
 // Kept out of search engines until Autopilot opens to everyone.
 const HOST = "https://autopilot.boltstriker.io";
-const DESCRIPTION = "Say your goal and Bolt copies the best traders on Strike Finance for you, inside hard limits you choose, on your own Strike account. Try the live demo.";
+const DESCRIPTION = "No Strike account or trading experience needed: connect a Cardano wallet, say your goal, and Bolt copies the best traders on Strike Finance for you, inside limits you choose, on your own Strike account.";
 
 export function autopilotMeta(opts: { title: string; path: string; description?: string; image?: "landing" | "impact"; index?: boolean }): Metadata {
   const description = opts.description ?? DESCRIPTION;

@@ -15,7 +15,7 @@ export type CopilotContext = {
   rules: AutoRules | null;
   maxBudgetUsd: number;
   balance: number | null;
-  copies: { lead: string; amount: number; pnl: number }[];
+  copies: { lead: string; amount: number; pnl: number; name?: string }[]; // name: what the user calls this trader
   mode?: "off" | "on" | "autopilot" | null; // the bot right now
   sinceStart?: number | null; // profit since the user pressed Start (copies that ended included)
   today?: number | null; // profit today (UTC)
@@ -143,7 +143,7 @@ function contextNote(c: CopilotContext): string {
     c.rules?.avoid?.length ? `Blocked traders (keep them in avoid): ${c.rules.avoid.join(", ")}.` : "",
   ];
   if (c.balance !== null) lines.push(`Balance: $${c.balance.toFixed(2)}.`);
-  if (c.copies.length) lines.push(`Copies: ${c.copies.map((x) => `${x.lead} $${x.amount.toFixed(0)} (${money(x.pnl)})`).join(", ")}.`);
+  if (c.copies.length) lines.push(`Copies: ${c.copies.map((x) => `${x.name ? `"${x.name}" ` : ""}${x.lead} $${x.amount.toFixed(0)} (${money(x.pnl)})`).join(", ")}. Call a trader by the user's name for them when there is one.`);
   return lines.filter(Boolean).join(" ");
 }
 

@@ -5,13 +5,15 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { useAutopilotAccess } from "@/lib/autopilotAccess";
+import { useAutopilotHref } from "@/lib/autopilotHost";
 import { site } from "@/lib/config";
 
 export function SoonLink({ href, className = "", children, soon = "Opening soon", tip = "above" }: { href: string; className?: string; children: ReactNode; soon?: string; tip?: "above" | "below" }) {
   const { locked } = useAutopilotAccess();
+  const hrefFor = useAutopilotHref();
   if (!locked)
     return (
-      <Link href={href} className={className}>
+      <Link href={hrefFor(href)} className={className}>
         {children}
       </Link>
     );

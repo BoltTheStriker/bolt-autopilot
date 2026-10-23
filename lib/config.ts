@@ -59,6 +59,12 @@ export const site = {
   /** Autopilot teaser: its landing page is public, but the app, demo and impact page stay locked ("Opening soon")
    *  for everyone except a verified admin, until the worker says Autopilot is open. */
   autopilotTeaser: true,
+  /** "Deposit any Cardano token" (SteelSwap swaps it to ADA, then a normal deposit). Built and ready; true shows the
+   *  "Other token" tab in the deposit window. The server side is live already (STEELSWAP_API_KEY on the worker). */
+  tokenDeposits: false,
+  /** $BOLT inside Autopilot. holderOnly false = the open launch days (everyone can use Autopilot); true = wallets holding
+   *  at least holderMin $BOLT. feeBps: Bolt's fee on Autopilot trades (0 during the beta); when on, it buys back and burns. */
+  boltAccess: { holderMin: 1_000_000, holderOnly: false, feeBps: 0 },
   botApi: process.env.NEXT_PUBLIC_BOT_API || "https://api.boltstriker.io", // env override for local testing
 
   socials: {

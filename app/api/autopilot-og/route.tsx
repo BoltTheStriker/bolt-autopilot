@@ -9,7 +9,7 @@ import { ogFont } from "@/lib/ogFont";
 const MINT = "#4efab0";
 const HOST = "autopilot.boltstriker.io";
 const PAGES = {
-  landing: { size: 60, title: ["Copy trading on Strike,", "on autopilot."], sub: "Say your goal. Bolt copies the best traders for you, inside your limits, on your own Strike account." },
+  landing: { size: 64, title: ["The easiest way", "into Strike."], sub: "No Strike account or trading skills needed. Say your goal; Bolt copies Strike's best traders for you, inside your limits." },
   impact: { size: 72, title: ["What Bolt brings", "to Strike."], sub: "Users, copy-trading volume and RealFi liquidity on Strike Finance, live." },
 } as const;
 

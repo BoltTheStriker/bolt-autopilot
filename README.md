@@ -1,9 +1,9 @@
 # Bolt Autopilot
 
-**Copy trading on Strike Finance, on autopilot.** Say your goal and Bolt Autopilot copies the best traders on Strike for you, inside hard limits you choose, on your own Strike account. Bolt never holds your money.
+**The easiest way into Strike.** No Strike account and no trading experience needed: connect a Cardano wallet, say your goal, and Bolt Autopilot copies the best traders on Strike Finance for you, inside limits you choose, on your own Strike account. Bolt never holds your money.
 
 - Live: https://autopilot.boltstriker.io (private beta on Strike mainnet; the demo is open to anyone)
-- Impact: https://autopilot.boltstriker.io/impact (live numbers on what Bolt brings to Strike)
+- Impact: https://autopilot.boltstriker.io/impact (live numbers on what Bolt brings to Strike, the $BOLT flywheel and the benchmark)
 - Strike builder code: `bolt_dev`
 - Write-up: [`docs/hackathon/SUBMISSION.md`](docs/hackathon/SUBMISSION.md)
 
@@ -11,12 +11,16 @@
 
 1. **One-signature onboarding.** A Cardano wallet signs once and Strike opens the user's account (or links an existing one) through Strike's builder program. The API key Bolt receives can trade but never withdraw.
 2. **Goals become rules, previewed first.** Risk (Low, Medium, High), goal (Steady, Balanced, Growth) and markets (all, crypto, or real-world) set the budget at work, a leverage cap, a stop-loss on every copy and a daily loss limit, all enforced on Strike. Optional rules go further: stop the whole bot at +$X or −$X since Start, stop for the day at a profit target, pause until a time, weekdays only, never copy a given trader, and copy at 1× to 3× the trader's size (capped by risk level). The panel replays the bot's current picks for those rules over the last 7 days before any money moves.
-3. **A ranked engine.** Every hour it ranks Strike's top traders by return per unit of drawdown times consistency. It keeps only traders a copy can follow at the user's size, who are active and who trade markets Strike lists, and it holds what works instead of churning.
+3. **A ranked engine.** Every hour it ranks Strike's copy leaderboard (Hyperliquid traders) by return per unit of drawdown times consistency, with activity measured on Hyperliquid: picks traded in the last day, in at least 2 of the last 24 hours, mostly in Strike's markets. It favours traders in a trade right now (a new copy opens their positions at once) and not losing this week, spreads copies over different bets, and cross-checks all of Hyperliquid's leaderboard every 6 hours.
 4. **AI copilot.** Users say what they want in their own words ("stop when I'm up $20", "pause until Monday", "copy at 2x", "never copy that trader again", "how am I doing?"). The copilot reads the bot's traders, the account's live results and Strike's Earn rates, then proposes a full rule set or a one-tap action (start, stop, switch mode). Nothing changes until the user taps it.
 5. **AI Autopilot, inside hard limits.** In Autopilot mode Claude reviews the bot when something calls for it (a trader leaving the ranking, a copy near its stop-loss, losses near the daily limit, a daily check) and may swap a trader or step risk down. A validator clamps anything looser than the user's own settings, and Autopilot never touches the user's targets, schedule or blocked traders. Every review shows its trail: why it looked, who decided (Claude or the rules), what changed, the limits check, and what Strike then did. A plain-rules version takes over if Claude is unavailable.
 6. **Earn on Strike.** The Earn tab shows how much of the user's money is in copies, idle and earning, and three ways to earn with live rates: Strike's SLP vault, RealFi's sUSDrf through Borrow & Earn (deposited in one signature from Bolt), and STRIKE staking.
 7. **Deposit and withdraw inside Bolt.** ADA in with one signature; withdrawals go only to the wallet registered on the account, with its signature.
 8. **Live demo.** $1,000 of pretend money that moves with the picked traders' live trading, so anyone can try it without a wallet.
+9. **Nothing fails silently.** Strike's own reasons for any order it couldn't copy appear in the activity feed, a health badge and in-page notices show what the bot just did, and the dashboard shows profit since the account started (deposits excluded).
+10. **Trader window.** Click any trader to name them and see Bolt's numbers, their 30-day profit, open positions, recent trades and how much of their trading a Strike copy can follow.
+11. **Share your setup.** A link that starts a friend with your rules (their own budget), with your verified result.
+12. **The $BOLT flywheel.** Trading through Bolt → the live bot's profits (and, after the beta, a small Bolt fee) → $BOLT bought back and burned → holders paid in STRIKE; holding 1M $BOLT unlocks Autopilot and its perks after the open launch days. Bolt Vault and social copy trading are on the roadmap.
 
 ## How it works
 

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { walletBalance, type InstalledWallet } from "@/lib/wallet";
 import { I } from "./steps";
 import { MoneyPath } from "./strike";
+import { TokenDeposit, type SwapApi } from "./TokenDeposit";
 
 /** Where a deposit is: Strike builds it, the wallet signs it, it goes to Cardano; then it's on its way. */
 export type DepositStage = "prepare" | "sign" | "send" | "done";
@@ -38,6 +39,7 @@ export function DepositModal({
   error,
   onDeposit,
   onClose,
+  swapApi,
 }: {
   open: boolean;
   wallets: InstalledWallet[];
@@ -45,8 +47,10 @@ export function DepositModal({
   error: string;
   onDeposit: (key: string, ada: number, onStage: (s: DepositStage) => void) => Promise<string | null>;
   onClose: () => void;
+  swapApi?: SwapApi | null; // "Other token": swap a wallet token to ADA through SteelSwap first
 }) {
   const [ada, setAda] = useState("250");
+  const [tab, setTab] = useState<"ada" | "token">("ada");
   // The remembered wallet when there is one (a single entry); otherwise the user's pick, or the first.
   const [picked, setKey] = useState<string | null>(null);
   const key = wallets.length === 1 ? wallets[0].key : (picked ?? wallets[0]?.key ?? null);
@@ -108,52 +112,74 @@ export function DepositModal({
                     ✕
                   </button>
                 </div>
-                <p className="mt-1 text-sm text-muted">Strike turns your ADA into trading balance; it arrives in a few minutes.</p>
-                <MoneyPath direction="in" className="mt-4" />
-
-                {wallets.length > 1 && (
-                  <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                    {wallets.map((w) => (
-                      <button key={w.key} onClick={() => (setKey(w.key), setHeld(null))} className={`rounded-full px-3 py-1 ${key === w.key ? "bg-white/15 text-white" : "text-muted"}`}>
-                        {w.name}
+                <p className="mt-1 text-sm text-muted">
+                  {tab === "ada" ? "Strike turns your ADA into trading balance; it arrives in a few minutes." : "Hold SNEK, NIGHT or another token? Swap it to ADA in your wallet, then deposit."}
+                </p>
+                {swapApi && (
+                  <div className="mt-4 inline-flex rounded-full bg-white/[0.05] p-1 text-sm">
+                    {(
+                      [
+                        ["ada", "ADA"],
+                        ["token", "Other token"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button key={id} onClick={() => setTab(id)} className={`rounded-full px-4 py-1.5 font-semibold transition ${tab === id ? "bg-mint text-ink" : "text-soft hover:text-white"}`}>
+                        {label}
                       </button>
                     ))}
                   </div>
                 )}
+                {tab === "token" && swapApi ? (
+                  <TokenDeposit walletKey={key} api={swapApi} onAdaReady={(n) => (setAda(String(n)), setTab("ada"), setHeld(null))} />
+                ) : (
+                  <>
+                    <MoneyPath direction="in" className="mt-4" />
 
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {[100, 250, 500, 1000].map((v) => (
+                    {wallets.length > 1 && (
+                      <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                        {wallets.map((w) => (
+                          <button key={w.key} onClick={() => (setKey(w.key), setHeld(null))} className={`rounded-full px-3 py-1 ${key === w.key ? "bg-white/15 text-white" : "text-muted"}`}>
+                            {w.name}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {[100, 250, 500, 1000].map((v) => (
+                        <button
+                          key={v}
+                          onClick={() => setAda(String(v))}
+                          className={`rounded-full px-4 py-2 font-mono text-sm transition ${value === v ? "bg-mint text-ink" : "bg-white/[0.06] text-soft hover:text-white"}`}
+                        >
+                          {v} ₳
+                        </button>
+                      ))}
+                    </div>
+                    <label className="mt-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 focus-within:border-mint/50">
+                      <span className="text-muted">₳</span>
+                      <input type="number" min={5} value={ada} onChange={(e) => setAda(e.target.value)} className="w-full bg-transparent font-mono text-lg outline-none" />
+                      {max !== null && (
+                        <button onClick={() => setAda(String(max))} className="rounded-full bg-white/10 px-2.5 py-1 text-xs">
+                          Max
+                        </button>
+                      )}
+                    </label>
+                    <p className="mt-2 text-xs text-muted">{held === null ? "Reading your wallet…" : `In your wallet: ${held.toLocaleString("en-US", { maximumFractionDigits: 2 })} ₳`}</p>
+
+                    {error && <p className="mt-3 rounded-xl bg-neg/10 px-3 py-2 text-sm text-neg">{error}</p>}
                     <button
-                      key={v}
-                      onClick={() => setAda(String(v))}
-                      className={`rounded-full px-4 py-2 font-mono text-sm transition ${value === v ? "bg-mint text-ink" : "bg-white/[0.06] text-soft hover:text-white"}`}
+                      disabled={!key || !(value >= 5) || (max !== null && value > max) || busy}
+                      onClick={() => void deposit()}
+                      className="mt-5 w-full rounded-full bg-mint py-3 font-semibold text-ink transition hover:bg-mint-2 disabled:opacity-50"
                     >
-                      {v} ₳
+                      {busy ? "Working…" : max !== null && value > max ? "More than your wallet has" : `Deposit ${value || 0} ₳`}
                     </button>
-                  ))}
-                </div>
-                <label className="mt-3 flex items-center gap-2 rounded-2xl border border-white/10 bg-white/[0.03] px-4 py-3 focus-within:border-mint/50">
-                  <span className="text-muted">₳</span>
-                  <input type="number" min={5} value={ada} onChange={(e) => setAda(e.target.value)} className="w-full bg-transparent font-mono text-lg outline-none" />
-                  {max !== null && (
-                    <button onClick={() => setAda(String(max))} className="rounded-full bg-white/10 px-2.5 py-1 text-xs">
-                      Max
-                    </button>
-                  )}
-                </label>
-                <p className="mt-2 text-xs text-muted">{held === null ? "Reading your wallet…" : `In your wallet: ${held.toLocaleString("en-US", { maximumFractionDigits: 2 })} ₳`}</p>
-
-                {error && <p className="mt-3 rounded-xl bg-neg/10 px-3 py-2 text-sm text-neg">{error}</p>}
-                <button
-                  disabled={!key || !(value >= 5) || (max !== null && value > max) || busy}
-                  onClick={() => void deposit()}
-                  className="mt-5 w-full rounded-full bg-mint py-3 font-semibold text-ink transition hover:bg-mint-2 disabled:opacity-50"
-                >
-                  {busy ? "Working…" : max !== null && value > max ? "More than your wallet has" : `Deposit ${value || 0} ₳`}
-                </button>
-                <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-[11px] text-white/40">
-                  <span className="text-mint">{I.shield}</span> Your wallet shows exactly where it goes before you sign.
-                </p>
+                    <p className="mt-3 flex items-center justify-center gap-1.5 text-center text-[11px] text-white/40">
+                      <span className="text-mint">{I.shield}</span> Your wallet shows exactly where it goes before you sign.
+                    </p>
+                  </>
+                )}
               </>
             )}
           </motion.div>

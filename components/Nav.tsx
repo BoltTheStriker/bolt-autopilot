@@ -10,7 +10,7 @@ import { site } from "@/lib/config";
 import { useVerifiedAdmin } from "@/lib/adminPreview";
 import { SoonLink } from "./autopilot/SoonLink";
 import { useAutopilotOpen } from "@/lib/autopilotApi";
-import { useOnAutopilotHost } from "@/lib/autopilotHost";
+import { autopilotHref, scrollToSection, useOnAutopilotHost } from "@/lib/autopilotHost";
 
 // Homepage: marketing sections + Launch App (like strikefinance.org).
 const homeLinks = [
@@ -64,7 +64,16 @@ export function Nav() {
   const showAuto = full || site.autopilotTeaser; // the landing page is public in teaser mode
   const inAutoApp = path.startsWith("/autopilot/app") || (onAutoHost && path.startsWith("/app"));
   const inside = (l: { href: string }) => full || !l.href.startsWith("/autopilot/impact"); // the impact page stays private in teaser mode
-  const links = inAuto && showAuto ? (inAutoApp ? autoAppLinks : autoLinks).filter(inside) : [...(inApp ? appLinks : homeLinks), ...(showAuto ? [autoLink] : [])];
+  const links = (inAuto && showAuto ? (inAutoApp ? autoAppLinks : autoLinks).filter(inside) : [...(inApp ? appLinks : homeLinks), ...(showAuto ? [autoLink] : [])]).map((l) => ({
+    ...l,
+    href: autopilotHref(l.href, onAutoHost),
+  }));
+  // Inside Autopilot the logo goes to Autopilot's own home; a click on the page you're on just scrolls.
+  const home = inAuto ? autopilotHref("/autopilot", onAutoHost) : "/";
+  const go = (href: string) => (e: React.MouseEvent) => {
+    setOpen(false);
+    if (scrollToSection(href)) e.preventDefault();
+  };
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -87,7 +96,7 @@ export function Nav() {
           scrolled ? "bg-ink/95" : ""
         }`}
       >
-        <Link href="/" className="flex items-center gap-2.5" onClick={() => setOpen(false)}>
+        <Link href={home} className="flex items-center gap-2.5" onClick={go(home)}>
           <span className="relative grid size-9 place-items-center overflow-hidden rounded-full bg-mascot ring-1 ring-white/20">
             <Image src="/mascot-512.png" alt="" width={56} height={56} className="mt-3 scale-[1.9]" />
           </span>
@@ -100,7 +109,7 @@ export function Nav() {
         <ul className="hidden items-center gap-1 lg:flex">
           {links.map((l) => (
             <li key={l.href}>
-              <Link href={l.href} className="rounded-full px-3.5 py-2 text-sm text-soft transition hover:bg-white/8 hover:text-white">
+              <Link href={l.href} onClick={go(l.href)} className="rounded-full px-3.5 py-2 text-sm text-soft transition hover:bg-white/8 hover:text-white">
                 {l.label}
               </Link>
             </li>
@@ -161,7 +170,7 @@ export function Nav() {
             <Link
               key={l.href}
               href={l.href}
-              onClick={() => setOpen(false)}
+              onClick={go(l.href)}
               className="block rounded-2xl px-4 py-3 text-soft hover:bg-white/8 hover:text-white"
             >
               {l.label}

@@ -6,6 +6,8 @@
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
 import { autopilot, type CopilotAction, type CopilotContext } from "@/lib/autopilotApi";
+import { keepWaiting } from "@/lib/useIdleCopies";
+import { TraderText } from "./TraderText";
 import { describeRules, RISK_LEVELS, sanitizeRules, type AutoRules, type Risk } from "@/worker/autopilot";
 import { I } from "./steps";
 
@@ -23,7 +25,7 @@ const TWEAKS: Tweak[] = [
   { id: "lock", label: "Lock in profits", apply: (r) => ({ ...r, profitLockPct: 0.15 }), says: "Bank a copy's gains at +15%, then copy that trader again fresh." },
 ];
 
-type Msg = { me?: boolean; text: string; pending?: AutoRules; action?: CopilotAction };
+type Msg = { me?: boolean; text: string; pending?: AutoRules; action?: CopilotAction; swap?: string };
 
 const ASK = "bolt:copilot-ask";
 /** "Help me choose": point the user at the copilot (the docked panel focuses its input; the phone sheet opens separately). */
@@ -44,6 +46,8 @@ export function CopilotPanel({
   context,
   onApply,
   onAction,
+  idle,
+  onSwap,
   onClose,
 }: {
   rules: AutoRules | null;
@@ -52,6 +56,9 @@ export function CopilotPanel({
   context: CopilotContext;
   onApply: (r: AutoRules) => void;
   onAction?: (a: CopilotAction) => void;
+  /** Copies whose trader hasn't been in a trade for a while: the copilot asks whether to switch. */
+  idle?: string[];
+  onSwap?: (lead: string) => void;
   onClose?: () => void;
 }) {
   const [msgs, setMsgs] = useState<Msg[]>([
@@ -59,7 +66,22 @@ export function CopilotPanel({
   ]);
   const [draft, setDraft] = useState("");
   const [thinking, setThinking] = useState(false);
-  const say = (m: Msg[]) => setMsgs((x) => [...x.map((y) => ({ ...y, pending: undefined, action: undefined })), ...m]);
+  const say = (m: Msg[]) => setMsgs((x) => [...x.map((y) => ({ ...y, pending: undefined, action: undefined, swap: undefined })), ...m]);
+  // A quiet trader: speak up once per trader, with a choice.
+  const [asked, setAsked] = useState<string[]>([]);
+  // One question at a time: the next quiet trader only once the last one is answered.
+  const open = (m: Msg) => !!m.swap && context.copies.some((c) => c.lead === m.swap); // still a question: that trader is still copied
+  const quiet = onSwap && !msgs.some(open) ? (idle ?? []).find((l) => !asked.includes(l)) : undefined;
+  if (quiet) {
+    setAsked([...asked, quiet]);
+    setMsgs((x) => [
+      ...x,
+      {
+        text: `Heads up: ${quiet.length > 14 ? `${quiet.slice(0, 6)}…${quiet.slice(-4)}` : quiet} isn't in a trade right now. That's normal: your copy joins their next trade, and that can take a while. Keep waiting, or switch to another trader?`,
+        swap: quiet,
+      },
+    ]);
+  }
   // "Help me choose": focus the input, light up the panel, and say what to type.
   const input = useRef<HTMLInputElement>(null);
   const [lit, setLit] = useState(false);
@@ -130,7 +152,29 @@ export function CopilotPanel({
           {msgs.map((m, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className={`flex ${m.me ? "justify-end" : ""}`}>
               <div className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line ${m.me ? "rounded-br-md bg-mint text-ink" : "rounded-bl-md bg-white/[0.06] text-soft"}`}>
-                {m.text}
+                {m.me ? m.text : <TraderText text={m.text} />}
+                {onSwap && open(m) && (
+                  <div className="mt-2.5 flex gap-2">
+                    <button
+                      onClick={() => {
+                        keepWaiting(m.swap!);
+                        say([{ text: "OK, keeping them. Your copy joins their next trade; I won't ask about them again today." }]);
+                      }}
+                      className="rounded-full bg-mint px-3.5 py-1.5 text-xs font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]"
+                    >
+                      Keep waiting
+                    </button>
+                    <button
+                      onClick={() => {
+                        onSwap(m.swap!);
+                        say([{ text: "Switching: the bot stops that copy and picks the next best fit for your rules. That trader sits out for 2 hours." }]);
+                      }}
+                      className="rounded-full bg-white/10 px-3.5 py-1.5 text-xs"
+                    >
+                      Switch trader
+                    </button>
+                  </div>
+                )}
                 {m.action && onAction && (
                   <div className="mt-2.5 flex gap-2">
                     <button

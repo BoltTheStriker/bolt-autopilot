@@ -168,6 +168,20 @@ function autopilotSwap(d: DemoLive, c: DemoCopy, marks: Record<string, LiveMark>
   });
 }
 
+/** "Switch trader" in the demo: the copy keeps its money (what it made so far is banked) and follows the next best fit
+ *  with a live feed instead. Null when there's no one to switch to. */
+export function swapDemoCopy(prev: DemoLive, lead: string, marks: Record<string, LiveMark>, now: number): DemoLive | null {
+  const next = (prev.bench ?? []).find((l) => (marks[l]?.acct ?? 0) > 0 && !prev.copies.some((x) => x.lead === l));
+  const i = prev.copies.findIndex((c) => c.lead === lead && c.stopped === null && !c.closed);
+  if (!next || i < 0) return null;
+  const d: DemoLive = { ...prev, copies: prev.copies.map((c) => ({ ...c })), log: [...prev.log], bench: (prev.bench ?? []).filter((l) => l !== next) };
+  const c = d.copies[i];
+  const m = marks[next];
+  Object.assign(c, { lead: next, banked: c.banked + c.amount * c.ret, ret: 0, carried: 0, acct: m.acct, basePnl: m.pnl, baseSince: m.since, open: m.positions.map(posKey) });
+  d.log.unshift({ at: now, text: `Switched from ${lead} to ${next} as you asked: ${next} is the next best fit for your rules.` });
+  return d;
+}
+
 const HOUR = 3_600_000;
 const record = (d: DemoLive, r: AutoDecision) => (d.decisions = [r, ...(d.decisions ?? [])].slice(0, 20));
 

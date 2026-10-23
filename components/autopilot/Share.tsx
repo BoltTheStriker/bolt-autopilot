@@ -7,12 +7,14 @@ import { useEffect, useState } from "react";
 
 const HOST = "https://autopilot.boltstriker.io";
 
-export type ShareSource = { kind: "demo"; d: string; text: string } | { kind: "real"; getId: () => Promise<string>; text: string };
+/** setup: the demo's rules for a "start with my setup" link (a real account's link uses its share id). */
+export type ShareSource = { kind: "demo"; d: string; setup: string; text: string } | { kind: "real"; getId: () => Promise<string>; text: string };
 
 export function ShareModal({ open, source, onClose }: { open: boolean; source: ShareSource | null; onClose: () => void }) {
   const [query, setQuery] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [setupCopied, setSetupCopied] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   // The demo's query is known at once; a real account asks the server for its share id first.
@@ -39,6 +41,18 @@ export function ShareModal({ open, source, onClose }: { open: boolean; source: S
   const link = q ? `${HOST}/share?${q}` : null;
   const image = q ? `/api/autopilot-card?${q}` : null;
   const post = link && source ? `https://x.com/intent/post?text=${encodeURIComponent(source.text)}&url=${encodeURIComponent(link)}` : null;
+  // "Start with my setup": the rules for a friend (a demo's travel in the link; a real account's are looked up by id).
+  const setupLink = source?.kind === "demo" ? `${HOST}/app?setup=${source.setup}` : query ? `${HOST}/app?setup=${query.slice(3)}` : null;
+  const copySetup = async () => {
+    if (!setupLink) return;
+    try {
+      await navigator.clipboard.writeText(setupLink);
+      setSetupCopied(true);
+      setTimeout(() => setSetupCopied(false), 1800);
+    } catch {
+      setError("Couldn't copy here. Long-press the link to copy it.");
+    }
+  };
 
   const close = () => {
     setQuery(null);
@@ -105,6 +119,20 @@ export function ShareModal({ open, source, onClose }: { open: boolean; source: S
               <button onClick={() => void copy()} disabled={!link} className="glass rounded-full px-5 py-2.5 text-sm disabled:opacity-50">
                 {copied ? "Link copied" : "Copy link"}
               </button>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-mint/20 bg-mint/[0.04] p-4">
+              <p className="font-display font-semibold">Share your setup</p>
+              <p className="mt-0.5 text-xs text-muted">
+                A link that starts a friend with your rules; they choose their own budget.{" "}
+                {source.kind === "real" ? "Your verified result goes with it. No balances, no wallet." : "Marked as a demo setup."}
+              </p>
+              <div className="mt-3 flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate rounded-xl bg-white/[0.04] px-3 py-2 font-mono text-[11px] text-soft">{setupLink ?? "…"}</code>
+                <button onClick={() => void copySetup()} disabled={!setupLink} className="shrink-0 rounded-full bg-mint px-4 py-2 text-xs font-semibold text-ink transition hover:bg-mint-2 disabled:opacity-50">
+                  {setupCopied ? "Copied" : "Copy setup link"}
+                </button>
+              </div>
             </div>
           </motion.div>
         </motion.div>

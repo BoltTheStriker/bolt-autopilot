@@ -5,13 +5,27 @@
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAutopilotHref } from "@/lib/autopilotHost";
 import { checkAdminKey, readAdminKey } from "@/lib/adminPreview";
 import { autopilot, saveSession, savedSession, type AutoMe, type AutoMode, type AutoStatus, type CopilotAction, type Session, type SlpInfo } from "@/lib/autopilotApi";
-import { DEMO_BALANCE, demoCopies, demoValue, startDemo as startLiveDemo, stepDemo, type DemoLive } from "@/lib/autopilotDemo";
+import { site } from "@/lib/config";
+import { DEMO_BALANCE, demoCopies, demoValue, startDemo as startLiveDemo, stepDemo, swapDemoCopy, type DemoLive } from "@/lib/autopilotDemo";
+import { nameKey, useTraderNames } from "@/lib/traderNames";
+import { rememberAccount, useKnownAccounts } from "@/lib/knownAccounts";
+import { useIdleCopies } from "@/lib/useIdleCopies";
 import { connectAddress, installedWallets, sameAccount, signAndSubmit, signText, walletBalance, walletUtxos, type InstalledWallet } from "@/lib/wallet";
-import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, type AutoRules, type LiveMark, type PreviewTrader } from "@/worker/autopilot";
+import { defaultRules, describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type LiveMark, type PreviewTrader, type SharedRules } from "@/worker/autopilot";
+import { decodeDemoSetup, encodeDemoSetup } from "@/lib/setupLink";
 import { askConfirm, ConfirmHost, type ConfirmOptions } from "../Confirm";
 import { askCopilot, CopilotPanel } from "./Copilot";
+import { TraderModal } from "./TraderModal";
+import { BoltVaultSoon, HolderPerks } from "./BoltToken";
+import type { SwapApi } from "./TokenDeposit";
+import { OPEN_TRADER } from "./TraderText";
+import { Toasts, type Toast } from "./Toasts";
+
+/** Bot activity worth a card on the page (decisions, switches, stops, targets, problems), not every mirrored trade. */
+const NOTABLE = /^(?!Autopilot checked)(Autopilot|Switch|Stopped|Copying|Copy of|Profit target|Loss limit|Daily|Paused|Weekend|Couldn't|Bot switched|Stop-loss|Profit locked|Error)/;
 import { SUSDRF_UNIT, type RealFiActions } from "./RealFi";
 import { encodeDemoCard, GOAL_LABEL, RISK_LABEL } from "@/lib/autopilotShare";
 import { DepositModal, type DepositStage } from "./Deposit";
@@ -65,6 +79,7 @@ function fittingDefaults(budget: number): AutoRules {
 }
 
 export function AutopilotApp() {
+  const hrefFor = useAutopilotHref(); // /autopilot… links as this host reads them
   const [status, setStatus] = useState<AutoStatus | null>(null);
   const [slp, setSlp] = useState<SlpInfo | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -120,6 +135,7 @@ export function AutopilotApp() {
     try {
       const m = await autopilot.me(s);
       setMe(m);
+      rememberAccount(s.address, !!m.user.rules || m.user.mode !== "off" || m.user.copies.length > 0);
       if (m.user.mode !== "off" || m.user.copies.length) {
         const key = `bolt-autopilot-history-${m.user.accountId}`;
         let hist: { at: number; pnl: number; working: number }[] = [];
@@ -321,6 +337,12 @@ export function AutopilotApp() {
           : user.mode === "off" && !hasStarted
             ? 3
             : 4;
+  // Connected a wallet account Bolt hasn't set up, while this browser knows one that has a dashboard: point to it.
+  const known = useKnownAccounts();
+  const [newAccountOk, setNewAccountOk] = useState<string | null>(null);
+  const otherAccount =
+    !demoOn && session && user && !user.rules && !hasStarted && newAccountOk !== session.address ? (known.find((a) => a.setUp && a.address !== session.address) ?? null) : null;
+  const otherShort = (a: string) => `${a.slice(0, 10)}…${a.slice(-6)}`;
   const maxBudget = demoOn ? DEMO_BALANCE : Math.max(50, Math.min(status?.maxBudgetUsd ?? 500, balance || status?.maxBudgetUsd || 500));
 
   const view: BotView | null = useMemo(() => {
@@ -350,16 +372,19 @@ export function AutopilotApp() {
       };
     }
     if (!me) return null;
+    // Everything the user owns on Strike: the main account (its balance already holds the copies that run
+    // from it, plus their open profit) + first-version copies in their own sub-accounts + money parked there.
+    const total = me.balance
+      ? (me.balance.equity ?? me.balance.wallet) + me.user.copies.filter((c) => c.isolated).reduce((t, c) => t + c.amount + c.pnl, 0) + (me.parked ?? 0)
+      : null;
     return {
       demo: false,
       mode: me.user.mode,
       address: me.user.address,
       accountId: me.user.accountId,
-      // Everything the user owns on Strike: the main account (its balance already holds the copies that run
-      // from it, plus their open profit) + first-version copies in their own sub-accounts + money parked there.
-      balance: me.balance
-        ? (me.balance.equity ?? me.balance.wallet) + me.user.copies.filter((c) => c.isolated).reduce((t, c) => t + c.amount + c.pnl, 0) + (me.parked ?? 0)
-        : null,
+      balance: total,
+      // Profit since the account started: what's there minus what was put in (deposits and withdrawals don't count).
+      allTime: total !== null && me.user.netIn ? { pnl: total - me.user.netIn, base: me.user.netIn } : null,
       copies: me.user.copies,
       log: me.user.log,
       rulesText: me.rulesText,
@@ -375,6 +400,7 @@ export function AutopilotApp() {
       syncedAt: me.user.liveAt ?? me.user.lastSyncAt ?? null,
       live: !!me.user.liveAt,
       stopLossPct: me.user.rules?.stopLossPct,
+      note: me.user.note ?? null,
       // Today's profit: now against the first point recorded today (UTC).
       today: (() => {
         const day = new Date().toISOString().slice(0, 10);
@@ -409,6 +435,7 @@ export function AutopilotApp() {
       return {
         kind: "demo",
         d: encodeDemoCard({ ret, pnl, traders: n, since: demo.live.startedAt, risk: demo.rules.risk, goal: demo.rules.goal, markets: demo.rules.markets, curve: view.curve ?? [] }),
+        setup: encodeDemoSetup(demo.rules),
         text: `My Bolt Autopilot demo: ${pct(ret)} since ${since}, copying ${n} trader${n === 1 ? "" : "s"} on Strike. Try it with demo money:`,
       };
     }
@@ -471,6 +498,90 @@ export function AutopilotApp() {
       await refresh(session);
     });
   }
+  // "Switch trader": stop that copy and let the bot pick the next best fit (skipped for a day; the demo moves its money).
+  async function swapTrader(lead: string) {
+    if (demoOn) {
+      const live = demo.live && swapDemoCopy(demo.live, lead, marks, Date.now());
+      if (live) setDemoState({ ...demo, live });
+      else setError("No other trader fits your rules with a live feed right now.");
+      return;
+    }
+    // "Switching…" until the old copy is gone (the server stops it on its next sync, seconds later).
+    setSwapping(lead);
+    setTimeout(() => setSwapping((s) => (s === lead ? null : s)), 120_000);
+    await run("swap", async () => {
+      await autopilot.swap(session!, lead);
+      await refresh(session);
+    });
+    setTimeout(() => void refresh(session), 8_000);
+  }
+  const [swapping, setSwapping] = useState<string | null>(null);
+  const swappingLead = swapping && view?.copies.some((c) => c.lead === swapping) ? swapping : null;
+
+  // Something new from the bot: a card slides up on the page, and the new activity glows. On first load (or another
+  // account) nothing pops up: only what arrives while the page is open. Routine trade lines stay in the feed only.
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [fresh, setFresh] = useState<number | null>(null);
+  const [seen, setSeen] = useState<{ key: string; at: number } | null>(null);
+  const logKey = demoOn ? "demo" : (me?.user.accountId ?? "");
+  const newest = view?.log[0]?.at ?? 0;
+  if (view && seen?.key !== logKey) setSeen({ key: logKey, at: newest });
+  else if (view && seen && newest > seen.at) {
+    const added = view.log.filter((l) => l.at > seen.at && NOTABLE.test(l.text)).slice(0, 3).reverse();
+    setSeen({ key: logKey, at: newest });
+    setFresh(seen.at);
+    if (added.length) setToasts((t) => [...t, ...added.map((l, i) => ({ id: l.at * 10 + i, text: l.text }))]);
+  }
+  useEffect(() => {
+    if (fresh === null) return;
+    const t = setTimeout(() => setFresh(null), 20_000);
+    return () => clearTimeout(t);
+  }, [fresh]);
+  const closeToast = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), []);
+  // Any trader link in the app opens the trader window.
+  useEffect(() => {
+    const on = (e: Event) => setTraderOpen((e as CustomEvent<string>).detail);
+    window.addEventListener(OPEN_TRADER, on);
+    return () => window.removeEventListener(OPEN_TRADER, on);
+  }, []);
+  const [traderOpen, setTraderOpen] = useState<string | null>(null); // the trader window
+  const closeTrader = useCallback(() => setTraderOpen(null), []);
+  const traderNames = useTraderNames();
+  const idleLeads = useIdleCopies(view?.copies ?? [], !!view && view.mode !== "off", demoOn);
+  // "Start with my setup" links (?setup=…): a friend's rules, shown as a card the user can take or leave.
+  const [incoming, setIncoming] = useState<{ rules: SharedRules; card: { ret: number; since: number; traders: number } | null } | null>(null);
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get("setup");
+    if (!s) return;
+    const demoRules = decodeDemoSetup(s);
+    const found = demoRules ? Promise.resolve({ rules: demoRules, card: null }) : /^[0-9a-f]{12}$/.test(s) ? autopilot.setup(s) : Promise.reject(new Error("bad link"));
+    found.then(
+      (x) => setIncoming({ rules: x.rules, card: x.card ?? null }),
+      () => setError("That setup link isn't valid any more."),
+    );
+  }, []);
+  const myBudget = savedRules?.budgetUsd ?? draft?.budgetUsd ?? (demoOn ? DEMO_BALANCE : Math.min(Math.max(balance, 100), maxBudget));
+  const incomingRules = incoming ? sanitizeRules({ ...defaultRules(myBudget, incoming.rules.risk), ...incoming.rules, budgetUsd: myBudget }, maxBudget) : null;
+  const dropIncoming = () => {
+    setIncoming(null);
+    const u = new URL(window.location.href);
+    u.searchParams.delete("setup");
+    window.history.replaceState(null, "", u.pathname + u.search + u.hash);
+  };
+  async function takeIncoming() {
+    if (!incomingRules) return dropIncoming();
+    if (savedRules && step >= 3 && !editing) {
+      const ok = await askConfirm({ title: "Use this setup?", body: `Your rules switch to: ${describeRules(incomingRules)}. Your budget stays $${myBudget.toFixed(0)}.`, confirmLabel: "Use it" });
+      if (!ok) return;
+      await saveRules(incomingRules);
+    } else {
+      // Not running yet: it fills the rules form (now, or when the user gets there).
+      setDraft(incomingRules);
+      setDraftKey((k) => k + 1);
+      if (step < 2) setToasts((t) => [...t, { id: Date.now(), text: "Setup saved: it fills in your rules once you connect a wallet or try the demo." }]);
+    }
+    dropIncoming();
+  }
   // The copilot's one-tap actions (the tap is the confirmation): only once there are rules to run.
   const copilotActs = step >= 3 && !!savedRules;
   function actFromCopilot(a: CopilotAction) {
@@ -491,12 +602,12 @@ export function AutopilotApp() {
       demo: demoOn,
       rules: copilotRules,
       balance: view?.balance ?? null,
-      copies: (view?.copies ?? []).map((c) => ({ lead: c.lead, amount: c.amount, pnl: c.pnl })),
+      copies: (view?.copies ?? []).map((c) => ({ lead: c.lead, amount: c.amount, pnl: c.pnl, ...(traderNames[nameKey(c.lead)] ? { name: traderNames[nameKey(c.lead)] } : {}) })),
       mode: view?.mode ?? null,
       sinceStart: view?.targets?.run ?? null,
       today: view?.today ?? null,
     }),
-    [demoOn, copilotRules, view],
+    [demoOn, copilotRules, view, traderNames],
   );
 
   // The wallet this account was connected with: used for every signature (no picker). Sessions from
@@ -543,6 +654,20 @@ export function AutopilotApp() {
     });
     return sent;
   }
+
+  // "Other token" deposits: SteelSwap swaps a wallet token to ADA first (the server holds the key).
+  const swapApi = useMemo<SwapApi | null>(
+    () =>
+      session && site.tokenDeposits
+        ? {
+            tokens: (units) => autopilot.swapTokens(session, units).then((r) => r.tokens),
+            quote: (unit, amount) => autopilot.swapQuote(session, unit, amount),
+            build: (unit, amount, utxos, expected) => autopilot.swapBuild(session, unit, amount, utxos, expected),
+            notify: (hash, tx) => autopilot.swapNotify(session, hash, tx),
+          }
+        : null,
+    [session],
+  );
 
   // RealFi actions for a real, connected account (the demo shows the numbers only).
   const realfiActions: RealFiActions | null =
@@ -612,6 +737,53 @@ export function AutopilotApp() {
             <span className="font-semibold">Demo mode.</span>
             <span className="text-gold/80">$1,000 of pretend money and the bot&apos;s real, current picks. Nothing touches a wallet.</span>
           </div>
+        )}
+
+        {incoming && (
+          <section className="card rounded-3xl border border-mint/30 p-5 sm:p-6">
+            <p className="font-mono text-[11px] tracking-wider text-mint uppercase">A friend shared their setup</p>
+            {incoming.card ? (
+              <p className="mt-1.5 font-display text-xl font-semibold">
+                <span className={incoming.card.ret >= 0 ? "text-mint" : "text-neg"}>{`${incoming.card.ret >= 0 ? "+" : "−"}${Math.abs(incoming.card.ret * 100).toFixed(2)}%`}</span> on their real Strike account
+                <span className="text-base font-normal text-muted">
+                  {" "}
+                  since {new Date(incoming.card.since).toLocaleDateString("en-US", { month: "short", day: "numeric" })}, {incoming.card.traders} trader{incoming.card.traders === 1 ? "" : "s"}
+                </span>
+              </p>
+            ) : (
+              <p className="mt-1.5 font-display text-xl font-semibold">A setup from the demo (pretend money)</p>
+            )}
+            <p className="mt-2 text-sm text-soft">With your budget: {incomingRules ? describeRules(incomingRules).replace(/^./, (c) => c.toUpperCase()) : ""}.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button onClick={() => void takeIncoming()} className="rounded-full bg-mint px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-mint-2 hover:shadow-[0_6px_24px_rgba(78,250,176,0.35)] active:scale-[0.97]">
+                Use this setup
+              </button>
+              <button onClick={dropIncoming} className="glass rounded-full px-5 py-2.5 text-sm">
+                No thanks
+              </button>
+            </div>
+            <p className="mt-3 text-[11px] text-white/40">Only the shape of their rules travels; you choose your own budget. Past results don&apos;t promise future ones.</p>
+          </section>
+        )}
+
+        {otherAccount && (
+          <section className="card rounded-3xl border border-gold/35 p-5 sm:p-6">
+            <p className="font-mono text-[11px] tracking-wider text-gold uppercase">A different wallet account</p>
+            <p className="mt-1.5 font-display text-xl font-semibold">This wallet account is new to Bolt.</p>
+            <p className="mt-2 text-sm text-soft">
+              You connected <span className="font-mono text-white">{otherShort(session!.address)}</span>. Your dashboard is on{" "}
+              <span className="font-mono text-mint">{otherShort(otherAccount.address)}</span>. Wallets like Eternl, Lace and Vespr hold several accounts: switch to that one in your
+              wallet, then reconnect.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button onClick={disconnect} className="rounded-full bg-mint px-5 py-2.5 text-sm font-semibold text-ink transition hover:bg-mint-2">
+                Reconnect
+              </button>
+              <button onClick={() => setNewAccountOk(session!.address)} className="glass rounded-full px-5 py-2.5 text-sm">
+                Set up this one
+              </button>
+            </div>
+          </section>
         )}
 
         {step < 4 && !editing && <Stepper steps={STEPS} current={step} />}
@@ -684,20 +856,24 @@ export function AutopilotApp() {
                         onShare={view.copies.length > 0 ? () => setShare(shareNow()) : undefined}
                       />
                       <div className="grid gap-4 xl:grid-cols-2">
-                        <TradersList v={view} limit={3} />
+                        <HolderPerks walletKey={walletKey} demo={demoOn} />
+                        <BoltVaultSoon />
+                      </div>
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        <TradersList v={view} limit={3} onSwap={(l) => void swapTrader(l)} swapping={swappingLead} />
                         <div className="space-y-4">
                           <Allocation v={view} apr={slp?.apr ?? null} />
-                          <Activity v={view} limit={4} />
+                          <Activity v={view} limit={4} fresh={fresh} />
                         </div>
                       </div>
                     </>
                   )}
-                  {tab === "traders" && <TradersList v={view} />}
+                  {tab === "traders" && <TradersList v={view} onSwap={(l) => void swapTrader(l)} swapping={swappingLead} />}
                   {tab === "earn" && <EarnPanel v={view} slp={slp} realfi={me?.realfi} actions={realfiActions} />}
                   {tab === "activity" && (
                     <>
                       {!demoOn && me?.transfers && <Transfers list={me.transfers} />}
-                      <Activity v={view} />
+                      <Activity v={view} fresh={fresh} />
                     </>
                   )}
                 </motion.div>
@@ -713,7 +889,7 @@ export function AutopilotApp() {
           </p>
         )}
         <p className="pt-2 text-xs text-muted">
-          <Link href="/autopilot" className="hover:text-white">
+          <Link href={hrefFor("/autopilot")} className="hover:text-white">
             ← About Autopilot
           </Link>
         </p>
@@ -722,14 +898,14 @@ export function AutopilotApp() {
       {/* Copilot: docked on desktop, a sheet on phones. */}
       <aside className="hidden lg:block">
         <div className="sticky top-24 h-[calc(100vh-7.5rem)]">
-          <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} onAction={copilotActs ? actFromCopilot : undefined} />
+          <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} onAction={copilotActs ? actFromCopilot : undefined} idle={idleLeads} onSwap={(l) => void swapTrader(l)} />
         </div>
       </aside>
       <div className="lg:hidden">
         <AnimatePresence>
           {sheet && (
             <motion.div initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", stiffness: 300, damping: 34 }} className="fixed inset-x-2 bottom-2 z-[60] h-[75vh]">
-              <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} onAction={copilotActs ? actFromCopilot : undefined} onClose={() => setSheet(false)} />
+              <CopilotPanel key={String(chatOn)} rules={copilotRules} maxBudget={maxBudget} chat={chatOn} context={copilotContext} onApply={applyFromCopilot} onAction={copilotActs ? actFromCopilot : undefined} idle={idleLeads} onSwap={(l) => void swapTrader(l)} onClose={() => setSheet(false)} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -743,7 +919,19 @@ export function AutopilotApp() {
       <Tour steps={TOUR} open={tour} onClose={() => setTour(false)} />
       <ShareModal open={!!share} source={share} onClose={() => setShare(null)} />
       <ConfirmHost />
-      {session && me && <DepositModal open={depositOpen} wallets={myWallets} busy={busy === "deposit"} error={depositOpen ? error : ""} onDeposit={depositAda} onClose={() => (setDepositOpen(false), setError(""))} />}
+      <TraderModal lead={traderOpen} copy={view?.copies.find((c) => c.lead === traderOpen || nameKey(c.lead) === nameKey(traderOpen ?? "")) ?? null} onClose={closeTrader} onSwap={(l) => void swapTrader(l)} />
+      <Toasts list={toasts} onClose={closeToast} />
+      {session && me && (
+        <DepositModal
+          open={depositOpen}
+          wallets={myWallets}
+          busy={busy === "deposit"}
+          error={depositOpen ? error : ""}
+          onDeposit={depositAda}
+          onClose={() => (setDepositOpen(false), setError(""))}
+          swapApi={swapApi}
+        />
+      )}
       {session && me && (
         <WithdrawModal
           open={withdrawOpen}

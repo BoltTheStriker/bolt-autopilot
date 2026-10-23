@@ -1,7 +1,7 @@
 // Browser side of Bolt Autopilot: talks to the bot server's /autopilot routes.
 import { useEffect, useState } from "react";
 import { site } from "@/lib/config";
-import type { AutoRules, LiveMark, PreviewTrader } from "@/worker/autopilot";
+import type { AutoRules, LiveMark, PreviewTrader, SharedRules } from "@/worker/autopilot";
 
 export type AutoMode = "off" | "on" | "autopilot";
 export type AutoCopy = { lead: string; amount: number; pnl: number; isolated?: boolean; positions: { market: string; long: boolean; pnl?: number }[] };
@@ -23,6 +23,8 @@ export type AutoUserView = {
   reviewedAt?: number | null; // Autopilot's last check
   decisions?: AutoDecision[]; // Autopilot's latest reviews, newest first
   run?: { since: number; closed: number } | null; // since Start: the profit of copies that already ended (for the stop targets)
+  netIn?: number | null; // money put into the Strike account minus taken out: all-time profit = total − netIn
+  note?: string | null; // why the bot runs fewer copies than the rules ask for
   history?: { at: number; pnl: number; working: number }[]; // profit on the running copies at each sync
   liveAt?: number | null; // set when `copies` were just read live from Strike (not the last sync)
 };
@@ -58,11 +60,28 @@ export type CopilotContext = {
   demo: boolean;
   rules: AutoRules | null;
   balance: number | null;
-  copies: { lead: string; amount: number; pnl: number }[];
+  copies: { lead: string; amount: number; pnl: number; name?: string }[]; // name: what the user calls this trader
   mode?: AutoMode | null;
   sinceStart?: number | null; // profit since Start
   today?: number | null; // profit today (UTC)
 };
+/** A trader Bolt follows, as the trader window shows them (public data; the address as it was asked). */
+export type TraderCard = {
+  lead: string;
+  rank: number | null;
+  ranked: number;
+  stats: { score: number; dd: number; roi7d: number; roi30d: number; realWorldShare: number; strikeShare: number | null; activeHours24h: number | null } | null;
+  accountUsd: number | null;
+  pnl: { day: number | null; week: number | null; month: number | null; allTime: number | null };
+  volume30d: number | null;
+  curve: [number, number][]; // 30 days: [time, profit in $]
+  positions: { market: string; long: boolean; valueUsd: number; entry: number; pnl: number; onStrike: boolean }[];
+  trades: { at: number; market: string; dir: string; px: number; sizeUsd: number; pnl: number; onStrike: boolean }[];
+  closes14d: { count: number; wins: number };
+  at: number;
+};
+export type WalletToken = { unit: string; ticker: string | null; name: string | null; decimals: number; logoUrl: string | null; priceAda: number | null };
+export type SwapQuote = { outputLovelace: number; batcherLovelace: number; depositLovelace: number; serviceLovelace: number; venue: string };
 /** A one-tap action the copilot can offer. */
 export type CopilotAction = "start" | "stop" | "autopilot" | "follow_rules";
 
@@ -116,6 +135,16 @@ export const autopilot = {
   me: (s: Session) => call<AutoMe>("me", s),
   rules: (s: Session, rules: AutoRules) => call<{ user: AutoUserView; rulesText: string }>("rules", { ...s, rules }),
   mode: (s: Session, mode: AutoMode) => call<{ user: AutoUserView }>("mode", { ...s, mode }),
+  swap: (s: Session, lead: string) => call<{ user: AutoUserView }>("swap", { ...s, lead }),
+  trader: (lead: string) => call<TraderCard>(`trader?lead=${encodeURIComponent(lead)}`),
+  // Deposit any Cardano token: swapped to ADA through SteelSwap in the user's wallet, then a normal ADA deposit.
+  swapTokens: (s: Session, units: string[]) => call<{ tokens: WalletToken[] }>("swap/tokens", { ...s, units }),
+  swapQuote: (s: Session, unit: string, amount: string) => call<SwapQuote>("swap/quote", { ...s, unit, amount }),
+  swapBuild: (s: Session, unit: string, amount: string, utxos: string[], expectedLovelace: number) =>
+    call<{ txCbor: string; txHash: string; partialSign: boolean }>("swap/build", { ...s, unit, amount, utxos, expectedLovelace }),
+  swapNotify: (s: Session, txHash: string, txCbor: string) => call<{ ok: boolean }>("swap/notify", { ...s, txHash, txCbor }),
+  /** A shared setup by share id: the rules' shape and the sharer's verified result. */
+  setup: (id: string) => call<{ rules: SharedRules; card: { ret: number; since: number; traders: number; mode: AutoMode } }>(`setup/${id}`),
   /** The copies' profit right now, read live from Strike (for the stop confirmation). */
   live: (s: Session) => call<{ at: number; copies: number; pnl: number; working: number }>("live", s),
   /** This account's share id for its public result card (made once, then reused). */

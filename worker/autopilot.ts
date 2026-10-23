@@ -115,6 +115,25 @@ export function sanitizeRules(x: unknown, maxBudget = BETA_MAX_BUDGET_USD): Auto
   };
 }
 
+/** What a shared setup link carries: the shape of the rules, never a budget, dollar targets or blocked traders. */
+export type SharedRules = Pick<AutoRules, "risk" | "goal" | "markets" | "traders" | "maxLeverage" | "stopLossPct" | "dailyLossPct" | "profitLockPct"> & {
+  boost?: number | null;
+  weekdaysOnly?: boolean;
+};
+
+export const sharedRules = (r: AutoRules): SharedRules => ({
+  risk: r.risk,
+  goal: r.goal,
+  markets: r.markets,
+  traders: r.traders,
+  maxLeverage: r.maxLeverage,
+  stopLossPct: r.stopLossPct,
+  dailyLossPct: r.dailyLossPct,
+  profitLockPct: r.profitLockPct,
+  boost: r.boost ?? null,
+  weekdaysOnly: !!r.weekdaysOnly,
+});
+
 /** Strike's markets that are crypto; everything else (stocks, indices, metals, oil) is real-world. */
 export const CRYPTO = new Set(["ADA", "BNB", "BTC", "ETH", "HYPE", "NEAR", "NIGHT", "PUMP", "SOL", "XRP", "ZEC"]);
 export const isCrypto = (symbol: string) => CRYPTO.has(symbol.replace(/-USD$/, ""));
@@ -135,9 +154,31 @@ export type Candidate = {
   realWorldShare: number; // share of their recent trading in real-world markets (0–1)
   /** Share of their trades a copy of each size could follow (Strike's copy_amount_coverage). */
   coverage?: { amount: number; share: number }[];
+  /** Share of their recent trading in markets Strike lists (a copy skips the rest); unknown = undefined. */
+  strikeShare?: number;
+  /** In how many of the last 24 hours they traded; unknown = undefined. */
+  activeHours24h?: number;
+  /** Holding positions right now (a new copy opens them at once); unknown = undefined. */
+  holding?: boolean;
+  /** Return over the last 7 days; unknown = undefined. */
+  roi7d?: number;
+  /** What they hold now, as "BTC:L" / "ETH:S" (for spreading copies over different bets); unknown = undefined. */
+  bets?: string[];
 };
 
 export const MIN_COVERAGE = 0.6; // a copy must be able to follow at least this share of the trader's trades
+export const MIN_STRIKE_SHARE = 0.7; // a new pick trades mostly in Strike's markets (the rest is invisible to a copy), as the live bot asks
+
+/** How well a copy would actually work with this trader right now, about 0.3–1.1. A copy opens the trader's current
+ *  positions at once and then follows new trades: so holding positions now, trading through the day, trading in
+ *  Strike's markets and not losing this week all count. */
+export function followFit(c: Candidate): number {
+  const onStrike = c.strikeShare === undefined ? 1 : Math.min(1, Math.max(0, c.strikeShare));
+  const busy = c.activeHours24h === undefined ? 1 : Math.min(1, 0.4 + 0.1 * c.activeHours24h); // 2h → 0.6, 6h+ → 1
+  const now = c.holding === undefined ? 1 : c.holding ? 1.1 : 0.85; // in a trade now: the copy starts working at once
+  const week = c.roi7d === undefined ? 1 : Math.min(1.1, Math.max(0.6, 1 + c.roi7d * 2)); // −10% this week → 0.8, +5% → 1.1
+  return (0.5 + 0.5 * onStrike) * busy * now * week;
+}
 
 /** Share of a trader's trades a copy of `amount` can follow (unknown: assume yes). */
 export function coverageFor(c: Candidate, amount: number): number {
@@ -192,22 +233,44 @@ export function advanceMark(prev: LiveMark | undefined, now: { unrealized: numbe
  *  rule drops traders who'd barely trade there. Traders already being copied (`held`) stay
  *  while they're still on the ranked list, so a reshuffle of the ranking doesn't churn copies;
  *  only empty slots take new picks. */
+/** Each copy's size under these rules. */
+export const perCopyUsd = (rules: AutoRules) => (rules.budgetUsd * RISK_LEVELS[rules.risk].deploy) / Math.max(1, rules.traders);
+
+/** Traders a copy of `perCopy` dollars can follow well, mostly in Strike's markets, and not blocked (held ones stay). */
+export function fitting(cands: Candidate[], rules: AutoRules, held: string[] = [], perCopy = perCopyUsd(rules)): Candidate[] {
+  const keepIds = new Set(held.map((h) => h.toLowerCase()));
+  return cands.filter(
+    (c) => !avoids(rules, c.lead) && (keepIds.has(c.lead.toLowerCase()) || (coverageFor(c, perCopy) >= MIN_COVERAGE && (c.strikeShare === undefined || c.strikeShare >= MIN_STRIKE_SHARE))),
+  );
+}
+
 export function pickTraders(cands: Candidate[], rules: AutoRules, held: string[] = []): Candidate[] {
   // New picks must be copyable at this user's own copy size (bigger copies can follow more traders).
-  const perCopy = (rules.budgetUsd * RISK_LEVELS[rules.risk].deploy) / Math.max(1, rules.traders);
-  const keepIds = new Set(held.map((h) => h.toLowerCase()));
-  cands = cands.filter((c) => !avoids(rules, c.lead) && (keepIds.has(c.lead.toLowerCase()) || coverageFor(c, perCopy) >= MIN_COVERAGE));
+  cands = fitting(cands, rules, held);
   const fits = cands.filter((c) => (rules.markets === "realworld" ? c.realWorldShare >= 0.3 : rules.markets === "crypto" ? c.realWorldShare <= 0.7 : true));
-  const by =
+  const goal =
     rules.goal === "steady"
       ? (c: Candidate) => c.score * (1 - Math.min(c.dd, 0.5)) // calmest of the good ones
       : rules.goal === "growth"
         ? (c: Candidate) => c.score * (1 + Math.min(Math.max(c.roi30d, 0), 1) * 0.5) // good ones with more upside
         : (c: Candidate) => c.score;
+  const by = (c: Candidate) => goal(c) * followFit(c);
   const keep = new Set(held.map((h) => h.toLowerCase()));
-  const kept = fits.filter((c) => keep.has(c.lead.toLowerCase()));
+  const kept = fits.filter((c) => keep.has(c.lead.toLowerCase())).sort((a, b) => by(b) - by(a));
   const rest = fits.filter((c) => !keep.has(c.lead.toLowerCase())).sort((a, b) => by(b) - by(a));
-  return [...kept.sort((a, b) => by(b) - by(a)), ...rest].slice(0, rules.traders);
+  // Spread the copies: prefer a trader whose current positions don't repeat a bet another pick already holds (three
+  // copies all long BTC are one bet). Stack only when nobody else fits.
+  const picks = kept.slice(0, rules.traders);
+  const taken = new Set(picks.flatMap((c) => c.bets ?? []));
+  const overlaps = (c: Candidate) => (c.bets ?? []).some((b) => taken.has(b));
+  for (const pass of [false, true])
+    for (const c of rest) {
+      if (picks.length >= rules.traders) break;
+      if (picks.includes(c) || (!pass && overlaps(c))) continue;
+      picks.push(c);
+      for (const b of c.bets ?? []) taken.add(b);
+    }
+  return picks;
 }
 
 /** The Strike copy settings for each pick: the money each copy gets and the limits Strike enforces. */
@@ -227,8 +290,9 @@ export function copySpecs(picks: Candidate[], rules: AutoRules, allSymbols: stri
     stopLossUsd: Math.max(1, Math.round(amount * rules.stopLossPct * 100) / 100),
     maxLeverage: rules.maxLeverage,
     multiplier: boostOf(rules),
-    // No single symbol may take more than half a copy's money.
-    maxMarginPerSymbol: Math.floor(amount * 0.5 * 100) / 100,
+    // Low risk keeps at most half a copy on one coin (Strike skips orders past it). Medium and high let a copy follow a
+    // trader who's all-in on one coin; the copy's stop-loss and the daily limit still cap the loss.
+    maxMarginPerSymbol: rules.risk === "low" ? Math.floor(amount * 0.5 * 100) / 100 : amount,
     excludedSymbols: excluded,
   }));
 }

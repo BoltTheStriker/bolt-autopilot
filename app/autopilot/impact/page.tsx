@@ -5,7 +5,7 @@ import { autopilotMeta } from "@/lib/autopilotMeta";
 export const metadata: Metadata = autopilotMeta({
   title: "Bolt × Strike · What Bolt brings to Strike",
   path: "/impact",
-  description: "Live numbers on what Bolt brings to Strike Finance: new accounts through the bolt_dev builder code, copy-trading volume, the live bot's result and RealFi liquidity.",
+  description: "Live numbers on what Bolt brings to Strike Finance: new Strike accounts opened through Bolt, copy-trading volume, the live bot's result and RealFi liquidity.",
   image: "impact",
 });
 

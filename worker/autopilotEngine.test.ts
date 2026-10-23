@@ -201,3 +201,16 @@ test("a timed pause closes the copies and the bot picks up again by itself; week
   assert.deepEqual(u.managed, {});
   assert.ok(u.log.some((l) => /^Weekend break/.test(l.text)));
 });
+
+test("orders Strike couldn't copy show up once in the activity feed, with the reason", async () => {
+  const { client } = fakeStrike(1);
+  const u = user();
+  await syncUser(u, client, [spec("0xa")], T);
+  const fail = { id: "o1", subscription_id: "sub-0xa", lead_account_id: "0xa", symbol: "BTC-USD", error_message: "max_margin_per_symbol", created_at_ms: T + 30_000 };
+  (client as unknown as { request: () => Promise<unknown> }).request = async () => ({ status: 200, data: { orders: [fail] } });
+  await syncUser(u, client, [spec("0xa")], T + 60_000);
+  await syncUser(u, client, [spec("0xa")], T + 120_000);
+  const lines = u.log.filter((l) => /Couldn't copy a BTC trade/.test(l.text));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0].text, /more of this copy on one coin than its limit allows/);
+});

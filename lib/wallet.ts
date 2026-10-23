@@ -144,6 +144,16 @@ export async function sameAccount(key: string, address: string): Promise<boolean
 }
 
 /** Signs a transaction Strike built, adds the signature without re-encoding it, and submits it. Returns the tx hash. */
+/** Like signAndSubmit, and returns the signed transaction too (SteelSwap's order tracking wants it). */
+export async function signSubmitTx(key: string, unsignedTx: string, onSigned?: () => void): Promise<{ hash: string; tx: string }> {
+  const api = await window.cardano![key].enable();
+  const witnesses = await api.signTx(unsignedTx, true);
+  onSigned?.();
+  const { addWitnesses } = await import("./cardanoTx");
+  const tx = addWitnesses(unsignedTx, witnesses);
+  return { hash: await api.submitTx(tx), tx };
+}
+
 export async function signAndSubmit(key: string, unsignedTx: string, onSigned?: () => void): Promise<string> {
   const api = await window.cardano![key].enable();
   const witnesses = await api.signTx(unsignedTx, true);

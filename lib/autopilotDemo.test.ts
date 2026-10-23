@@ -1,7 +1,7 @@
 // node --experimental-strip-types --test lib/autopilotDemo.test.ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEMO_BALANCE, demoCopies, demoValue, startDemo, stepDemo } from "./autopilotDemo.ts";
+import { DEMO_BALANCE, demoCopies, demoValue, startDemo, stepDemo, swapDemoCopy } from "./autopilotDemo.ts";
 import { defaultRules, type LiveMark, type PreviewTrader } from "../worker/autopilot.ts";
 
 const t = (lead: string, score: number): PreviewTrader => ({ lead, score, dd: 0.05, roi30d: 0.2, realWorldShare: 0.2, roi7d: 0.05, week: [], open: [] });
@@ -91,4 +91,16 @@ test("boost sizes the copies, blocked traders are skipped, and a daily profit ta
   const d1 = stepDemo(d0, { [lead("b")]: mark(300) }, r, 60_000); // $1,000 copy × 3% × 3 = +$90
   assert.ok(d1.log.some((l) => /^Daily profit target reached \(\+\$90\.00 today/.test(l.text)));
   assert.equal(d1.haltedDay, d1.dayStart);
+});
+
+test("switch trader: the copy keeps its money (gains banked) and follows the next best fit", () => {
+  const r = { ...rules, traders: 1 };
+  const d0 = startDemo([t("a", 0.9), t("b", 0.8)], { a: mark(0), b: mark(0) }, r, 0);
+  assert.deepEqual(d0.bench, ["b"]);
+  const d1 = stepDemo(d0, { a: mark(100), b: mark(0) }, r, 60_000); // a: +1% of $750 = +$7.50
+  const d2 = swapDemoCopy(d1, "a", { a: mark(100), b: mark(50) }, 120_000)!;
+  assert.equal(d2.copies[0].lead, "b");
+  assert.equal(demoValue(d2, r.stopLossPct), DEMO_BALANCE + 7.5); // nothing lost in the switch
+  assert.match(d2.log[0].text, /^Switched from a to b as you asked/);
+  assert.equal(swapDemoCopy(d2, "b", { a: mark(0), b: mark(0) }, 180_000), null); // no one left to switch to
 });

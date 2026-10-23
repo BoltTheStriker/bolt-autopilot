@@ -4,10 +4,12 @@
 // worker or Cardano, and says so; a number we can't read yet shows "—", never a guess.
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useAutopilotHref } from "@/lib/autopilotHost";
 import { autopilot, type SlpInfo } from "@/lib/autopilotApi";
 import { site } from "@/lib/config";
 import { InView, FadeUp } from "../motion";
 import { SectionHeading } from "../ui";
+import { Flywheel } from "./BoltToken";
 import { StrikeMark } from "./strike";
 
 type Impact = {
@@ -38,6 +40,7 @@ const compact = (v: number | null | undefined) => (v === null || v === undefined
 const day = (ms: number | null | undefined) => (ms ? new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—");
 
 export function ImpactPage() {
+  const hrefFor = useAutopilotHref(); // /autopilot… links as this host reads them
   const [impact, setImpact] = useState<Impact | null>(null);
   const [coin, setCoin] = useState<Coin | null>(null);
   const [bot, setBot] = useState<BotState | null>(null);
@@ -115,8 +118,8 @@ export function ImpactPage() {
         </div>
       </section>
 
-      <Block id="users" eyebrow="Users" title={<>New Strike users, <span className="text-gradient">through Bolt.</span></>} intro="Every Autopilot user opens (or links) a Strike account through Bolt's builder code, and their copies run on Strike.">
-        <Stat tag="count" value={num(impact?.autopilot.accounts)} label="Strike accounts connected through Bolt" note="builder code bolt_dev" />
+      <Block id="users" eyebrow="Users" title={<>New Strike users, <span className="text-gradient">through Bolt.</span></>} intro="Every Autopilot user opens (or links) a Strike account through Bolt, and their copies run on Strike.">
+        <Stat tag="count" value={num(impact?.autopilot.accounts)} label="Strike accounts connected through Bolt" />
         <Stat tag="count" value={num(impact?.autopilot.botsOn)} label="Autopilot bots switched on" />
         <Stat tag="count" value={num(impact?.autopilot.copiesRunning)} label="Autopilot copies running now" />
         <Stat tag="count" value={num(impact?.holders.demoBots)} label="Demo bots run by $BOLT holders" note="on live Strike traders" />
@@ -129,6 +132,8 @@ export function ImpactPage() {
         <Stat tag="real" value={usd(impact?.autopilot.volumeUsd)} label="Autopilot users' copies" note={`${num(impact?.autopilot.orders)} filled orders`} />
         <Stat tag="chain" value={`₳${compact(coin?.volumeAda)}`} label="$BOLT token trading volume" note="the community behind the bot" />
       </Block>
+
+      <Flywheel />
 
       <section id="benchmark" className="mx-auto max-w-6xl scroll-mt-28 px-4 pt-24 sm:px-6">
         <SectionHeading eyebrow="Proof, in public" title={<>Bolt vs <span className="text-gradient">the leaderboard.</span></>}>
@@ -159,7 +164,7 @@ export function ImpactPage() {
       <section className="mx-auto max-w-6xl px-4 pt-20 sm:px-6">
         <div className="card flex flex-wrap items-center justify-between gap-4 rounded-3xl p-6 sm:p-8">
           <p className="max-w-xl text-soft">Every Bolt user is a Strike user. Try Autopilot with demo money in a minute, or connect your wallet.</p>
-          <Link href="/autopilot/app?demo=1" className="rounded-full bg-mint px-7 py-3 font-semibold text-ink transition hover:bg-mint-2">
+          <Link href={hrefFor("/autopilot/app?demo=1")} className="rounded-full bg-mint px-7 py-3 font-semibold text-ink transition hover:bg-mint-2">
             Try the demo →
           </Link>
         </div>

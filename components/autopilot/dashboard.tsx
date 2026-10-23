@@ -6,6 +6,8 @@ import { useEffect, useRef, useState } from "react";
 import type { AutoCopy, AutoDecision, AutoMe, AutoMode, SlpInfo } from "@/lib/autopilotApi";
 import { askConfirm } from "../Confirm";
 import { BoltRewards, EarnOptions, MoneyStrip } from "./EarnOptions";
+import { TraderLink, TraderText } from "./TraderText";
+import { BoltVaultSoon } from "./BoltToken";
 import { RealFiFlow, type RealFiActions } from "./RealFi";
 import { I, short, signed, Stat, time, usd } from "./steps";
 
@@ -42,6 +44,9 @@ export type BotView = {
   /** The user's whole-bot stop targets and the profit since Start they're measured on. */
   targets?: { profit: number | null; loss: number | null; run: number };
   today?: number | null; // profit today (UTC)
+  /** Real accounts: profit since the account started (what's there minus what was put in; deposits don't count). */
+  allTime?: { pnl: number; base: number } | null;
+  note?: string | null; // why the bot runs fewer copies than the rules ask for
 };
 
 export function TabBar({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
@@ -88,6 +93,10 @@ export function StatusCard({
   const working = v.copies.reduce((t, c) => t + c.amount, 0);
   // The same profit as a share: of the $1,000 in the demo, of the money in the copies for a real account.
   const profitPct = v.demo ? profit / 1_000 : working > 0 ? profit / working : null;
+  // A real account leads with its all-time result (deposits and withdrawals don't count); running copies below it.
+  const all = !v.demo && v.allTime && v.allTime.base > 0 ? v.allTime : null;
+  const shown = all ? all.pnl : profit;
+  const shownPct = all ? all.pnl / all.base : profitPct;
   const title = v.mode === "off" ? "Bot is off" : v.halted ? "Paused for today (daily limit)" : v.demo ? "Demo bot is running" : v.copies.length === 0 && !v.idle ? "Your bot is starting" : v.mode === "autopilot" ? "Autopilot is running" : "Your bot is running";
   return (
     <section className="card relative overflow-hidden rounded-3xl p-6 sm:p-7" data-tour="overview">
@@ -158,11 +167,12 @@ export function StatusCard({
         <Stat label={v.demo ? "Demo balance" : "Total on Strike"} value={v.balance === null ? "—" : usd(v.balance)} />
         <Stat label="Working in copies" value={usd(working)} />
         <div className={`group relative rounded-xl border border-mint/25 bg-mint/[0.06] px-3 py-2.5 transition ${onShare ? "hover:border-mint/50 hover:bg-mint/[0.1]" : ""}`}>
-          <p className="pr-8 text-[11px] text-muted">{v.demo ? "Profit since start" : "Profit on copies"}</p>
-          <p className={`mt-0.5 font-mono text-lg ${profit >= 0 ? "text-mint" : "text-neg"}`}>
-            {signed(profit)}
-            {profitPct !== null && <span className="ml-1.5 text-sm opacity-80">{`${profitPct >= 0 ? "+" : "−"}${Math.abs(profitPct * 100).toFixed(2)}%`}</span>}
+          <p className="pr-8 text-[11px] text-muted">{v.demo ? "Profit since start" : all ? "Profit since you started" : "Profit on copies"}</p>
+          <p className={`mt-0.5 font-mono text-lg ${shown >= 0 ? "text-mint" : "text-neg"}`}>
+            {signed(shown)}
+            {shownPct !== null && <span className="ml-1.5 text-sm opacity-80">{`${shownPct >= 0 ? "+" : "−"}${Math.abs(shownPct * 100).toFixed(2)}%`}</span>}
           </p>
+          {all && v.copies.length > 0 && <p className="text-[10px] text-white/45">Running copies {signed(profit)}</p>}
           {onShare && (
             <button
               onClick={onShare}
@@ -205,7 +215,7 @@ export function StatusCard({
           <div className="min-w-0 flex-1">
             <p className="font-medium text-white">{v.autopilot.reason ? "Autopilot's latest change" : "Autopilot is watching"}</p>
             <p className="mt-0.5 text-sm text-soft">
-              {v.autopilot.reason ?? "It checks your copies and adjusts inside your limits when something calls for it: a trader leaving the ranking, a copy near its stop-loss, losses near your daily limit."}
+              {v.autopilot.reason ? <TraderText text={v.autopilot.reason} /> : "It checks your copies and adjusts inside your limits when something calls for it: a trader leaving the ranking, a copy near its stop-loss, losses near your daily limit."}
             </p>
             {v.autopilot.rulesText && <p className="mt-1.5 text-xs text-muted">Running with: {v.autopilot.rulesText[0].toUpperCase() + v.autopilot.rulesText.slice(1)}.</p>}
             {(v.autopilot.at || v.autopilot.checkedAt) && (
@@ -302,6 +312,7 @@ function health(v: BotView, now: number): { tone: "ok" | "warn" | "paused"; labe
   const stop = v.stopLossPct;
   const near = stop ? v.copies.find((c) => !c.stopped && c.amount > 0 && c.pnl <= -0.6 * stop * c.amount) : undefined;
   if (near) return { tone: "warn", label: "Watch", detail: `The copy of ${short(near.lead)} is near its stop-loss (${signed(near.pnl)} on ${usd(near.amount)}). ${v.demo ? "The stop-loss" : "Strike's stop-loss"} closes it there.` };
+  if (!v.demo && v.note) return { tone: "warn", label: "Fewer traders", detail: v.note };
   if (!v.demo && v.copies.length === 0) return null; // starting: the card below explains
   return { tone: "ok", label: "Healthy", detail: `Every copy is inside your rules${age !== null ? `, synced with Strike ${ago(age)}` : ""}.` };
 }
@@ -364,7 +375,9 @@ function DecisionTrail({ decisions, demo }: { decisions: AutoDecision[]; demo: b
                 <li key={s.label} className="relative">
                   <span className="absolute top-1.5 -left-[21.5px] size-2 rounded-full bg-mint" />
                   <p className="font-mono text-[10px] tracking-wide text-white/40 uppercase">{s.label}</p>
-                  <p className="text-sm text-soft">{s.body}</p>
+                  <p className="text-sm text-soft">
+                    <TraderText text={s.body} />
+                  </p>
                 </li>
               ))}
             </ol>
@@ -511,7 +524,7 @@ export function Allocation({ v, apr }: { v: BotView; apr: number | null }) {
   );
 }
 
-export function TradersList({ v, limit }: { v: BotView; limit?: number }) {
+export function TradersList({ v, limit, onSwap, swapping }: { v: BotView; limit?: number; onSwap?: (lead: string) => void; swapping?: string | null }) {
   const list = limit ? v.copies.slice(0, limit) : v.copies;
   return (
     <section className="card rounded-3xl p-5 sm:p-6">
@@ -521,7 +534,7 @@ export function TradersList({ v, limit }: { v: BotView; limit?: number }) {
           {list.map((c) => (
             <li key={c.lead} className="rounded-2xl bg-white/[0.03] p-3.5">
               <div className="flex items-center gap-3 font-mono text-sm">
-                <span className="text-soft">{c.lead.length > 14 ? short(c.lead) : c.lead}</span>
+                <TraderLink lead={c.lead} />
                 {c.stopped && <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[10px] text-gold">stopped</span>}
                 <span className="ml-auto text-white/60">{usd(c.amount)}</span>
                 <span className={`w-24 text-right ${c.pnl >= 0 ? "text-mint" : "text-neg"}`}>{signed(c.pnl)}</span>
@@ -534,8 +547,18 @@ export function TradersList({ v, limit }: { v: BotView; limit?: number }) {
                       {p.pnl !== undefined && <span className="text-white/60"> {signed(p.pnl)}</span>}
                     </span>
                   ))
-                ) : v.demo ? null : (
-                  <span className="text-[11px] text-white/35">No open trades right now</span>
+                ) : c.stopped || v.mode === "off" ? null : (
+                  <span className="flex items-center gap-2 text-[11px] text-white/45">
+                    <span className="rounded-full bg-white/[0.06] px-2 py-0.5">Waiting for their next trade</span>
+                    {onSwap &&
+                      (swapping === c.lead ? (
+                        <Spinning label="Switching…" />
+                      ) : (
+                        <button disabled={!!swapping} onClick={() => onSwap(c.lead)} className="font-semibold text-mint underline-offset-2 hover:underline disabled:opacity-40">
+                          Switch trader
+                        </button>
+                      ))}
+                  </span>
                 )}
                 {c.roi7d !== undefined && <span className="ml-auto text-[11px] text-white/40">trader&apos;s last 7 days: {c.roi7d >= 0 ? "+" : "−"}{Math.abs(c.roi7d * 100).toFixed(1)}%</span>}
               </div>
@@ -549,18 +572,33 @@ export function TradersList({ v, limit }: { v: BotView; limit?: number }) {
   );
 }
 
-export function Activity({ v, limit }: { v: BotView; limit?: number }) {
+/** fresh: entries newer than this arrived while the page was open; they glow mint for a moment and say "New". */
+export function Activity({ v, limit, fresh }: { v: BotView; limit?: number; fresh?: number | null }) {
   const list = limit ? v.log.slice(0, limit) : v.log;
   return (
     <section className="card rounded-3xl p-5 sm:p-6">
       <h3 className="font-display text-lg font-semibold">What your bot did</h3>
       <ol className="mt-4 space-y-3">
-        {list.map((l, i) => (
-          <li key={i} className="border-l border-white/10 pl-3 text-xs leading-relaxed">
-            <p className="font-mono text-[11px] text-white/40">{time(l.at)}</p>
-            <p className="mt-0.5 text-soft">{l.text}</p>
-          </li>
-        ))}
+        {list.map((l, i) => {
+          const isNew = fresh !== null && fresh !== undefined && l.at > fresh;
+          return (
+            <motion.li
+              key={`${l.at}-${i}`}
+              initial={isNew ? { backgroundColor: "rgba(78,250,176,0.16)", x: -6 } : false}
+              animate={{ backgroundColor: "rgba(78,250,176,0)", x: 0 }}
+              transition={{ duration: 2.4, ease: "easeOut" }}
+              className={`rounded-r-lg border-l py-0.5 pl-3 text-xs leading-relaxed ${isNew ? "border-mint" : "border-white/10"}`}
+            >
+              <p className="flex items-center gap-2 font-mono text-[11px] text-white/40">
+                {time(l.at)}
+                {isNew && <span className="rounded-full bg-mint px-1.5 py-px font-sans text-[9px] font-bold tracking-wide text-ink uppercase">New</span>}
+              </p>
+              <p className="mt-0.5 text-soft">
+                <TraderText text={l.text} />
+              </p>
+            </motion.li>
+          );
+        })}
       </ol>
     </section>
   );
@@ -594,6 +632,8 @@ export function EarnPanel({ v, slp, realfi, actions }: { v: BotView; slp: SlpInf
       </section>
 
       <EarnOptions slp={slp} hasSlp={!!v.earn} />
+
+      <BoltVaultSoon />
 
       <RealFiFlow slp={slp} realfi={realfi ?? null} actions={actions ?? null} />
 

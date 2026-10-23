@@ -10,6 +10,7 @@ import { describeRules, defaultRules, RISK_LEVELS, type Goal, type Risk } from "
 import { Faq } from "../Faq";
 import { EASE, FadeUp, InView } from "../motion";
 import { SectionHeading } from "../ui";
+import { Flywheel, Roadmap } from "./BoltToken";
 import { StrikeMark, StrikeWordmark } from "./strike";
 import { SoonLink } from "./SoonLink";
 import { useEggTaps } from "./WalletEgg";
@@ -51,6 +52,8 @@ export function AutopilotLanding() {
       <Earn slp={slp} />
       <Safety />
       <Copilot />
+      <Flywheel />
+      <Roadmap />
       <AutoFaq />
       <Final />
     </main>
@@ -86,15 +89,16 @@ function Hero({ status }: { status: AutoStatus | null }) {
           </FadeUp>
           <FadeUp delay={0.2}>
             <h1 className="mt-6 font-display text-[clamp(2.6rem,5.2vw,4.25rem)] leading-[0.98] font-bold tracking-[-0.03em]">
-              Say your goal.
+              The easiest way
               <br />
-              <span className="text-gradient">The bot trades it.</span>
+              <span className="text-gradient">into Strike.</span>
             </h1>
           </FadeUp>
           <FadeUp delay={0.35}>
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-pretty text-soft">
-              Copy trading on <span className="font-semibold text-white">Strike Finance</span>, Cardano&apos;s perps exchange, on autopilot. Bolt picks the best traders for you and
-              keeps every copy inside rules you choose in plain words. Your money stays in your own Strike account, and the bot can never withdraw it.
+              No Strike account? No trading experience? Connect a Cardano wallet, say your goal, and Bolt copies the best traders on{" "}
+              <span className="font-semibold text-white">Strike Finance</span> for you, inside limits you choose. Your money stays in your own Strike account, and the bot can never
+              withdraw it.
             </p>
           </FadeUp>
           <FadeUp delay={0.5} className="mt-9 flex flex-col gap-3 sm:flex-row">

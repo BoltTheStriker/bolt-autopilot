@@ -38,7 +38,7 @@ test("copy specs: risk sets how much works and Strike's limits; small budgets co
   // Low risk deploys 50% of $300 = $150 → 3 copies of $50, 3x leverage cap, stop at −10%.
   assert.deepEqual(low.map((s) => [s.amount, s.maxLeverage, s.stopLossUsd, s.multiplier]), [[50, 3, 5, 1], [50, 3, 5, 1], [50, 3, 5, 1]]);
   const high = copySpecs(cands.slice(0, 2), { ...defaultRules(400, "high"), traders: 2, maxLeverage: 10 }, SYMBOLS);
-  assert.deepEqual(high.map((s) => [s.amount, s.multiplier, s.maxMarginPerSymbol]), [[200, 2, 100], [200, 2, 100]]);
+  assert.deepEqual(high.map((s) => [s.amount, s.multiplier, s.maxMarginPerSymbol]), [[200, 2, 200], [200, 2, 200]]); // the whole copy may go on one coin
   // $120 at medium risk = $90 working: only one $90 copy fits the $50 minimum.
   assert.equal(copySpecs(cands, { ...defaultRules(120), traders: 3 }, SYMBOLS).length, 1);
   assert.equal(copySpecs(cands, { ...defaultRules(40), traders: 3 }, SYMBOLS).length, 0);
@@ -106,4 +106,32 @@ test("new picks must be copyable at the user's own copy size", () => {
   const large = { ...defaultRules(500), risk: "high" as const, traders: 2 }; // $250 per copy
   assert.deepEqual(pickTraders([big, any], large).map((c) => c.lead), ["0xbig", "0xany"]);
   assert.deepEqual(pickTraders([big, any], small, ["0xbig"]).map((c) => c.lead), ["0xbig", "0xany"]); // a held copy isn't dropped for this
+});
+
+test("pickTraders prefers busy traders in Strike's markets; under half on Strike is no new pick", () => {
+  const c = (lead: string, score: number, strikeShare?: number, activeHours24h?: number): Candidate => ({ lead, score, dd: 0.05, roi30d: 0.2, realWorldShare: 0.2, strikeShare, activeHours24h });
+  const cands = [c("0xsleepy", 0.8, 0.95, 1), c("0xbusy", 0.7, 0.95, 8), c("0xoffstrike", 0.9, 0.4, 10), c("0xunknown", 0.6)];
+  const picks = pickTraders(cands, { ...defaultRules(300), traders: 3 }).map((x) => x.lead);
+  assert.deepEqual(picks, ["0xbusy", "0xunknown", "0xsleepy"]); // 0.7×0.975 > 0.6 > 0.8×0.975×0.7; 0xoffstrike out
+  // A trader already copied stays even if they now trade off Strike.
+  assert.ok(pickTraders(cands, { ...defaultRules(300), traders: 3 }, ["0xoffstrike"]).some((x) => x.lead === "0xoffstrike"));
+});
+
+test("low risk keeps at most half a copy on one coin; medium and high let a copy follow an all-in trader", () => {
+  const c: Candidate = { lead: "0xa", score: 0.9, dd: 0.05, roi30d: 0.2, realWorldShare: 0.1 };
+  assert.equal(copySpecs([c], { ...defaultRules(400, "low"), traders: 1 }, [])[0].maxMarginPerSymbol, 100); // $200 copy
+  assert.equal(copySpecs([c], { ...defaultRules(400, "high"), traders: 1 }, [])[0].maxMarginPerSymbol, 400);
+});
+
+test("pickTraders prefers traders in a trade now and not losing this week", () => {
+  const c = (lead: string, holding: boolean, roi7d: number): Candidate => ({ lead, score: 0.6, dd: 0.05, roi30d: 0.2, realWorldShare: 0.1, strikeShare: 1, activeHours24h: 8, holding, roi7d });
+  const picks = pickTraders([c("0xidle", false, 0.02), c("0xlosing", true, -0.1), c("0xready", true, 0.03)], { ...defaultRules(300), traders: 3 }).map((x) => x.lead);
+  assert.deepEqual(picks, ["0xready", "0xidle", "0xlosing"]);
+});
+
+test("pickTraders spreads copies over different bets, stacking only when nobody else fits", () => {
+  const c = (lead: string, score: number, bets: string[]): Candidate => ({ lead, score, dd: 0.05, roi30d: 0.2, realWorldShare: 0.1, strikeShare: 1, activeHours24h: 8, holding: true, roi7d: 0.02, bets });
+  const cands = [c("0xbtc1", 0.9, ["BTC:L"]), c("0xbtc2", 0.85, ["BTC:L", "ETH:L"]), c("0xgold", 0.7, ["GOLD:L"]), c("0xeth", 0.6, ["ETH:S"])];
+  assert.deepEqual(pickTraders(cands, { ...defaultRules(600), traders: 3 }).map((x) => x.lead), ["0xbtc1", "0xgold", "0xeth"]); // not two long-BTC copies
+  assert.deepEqual(pickTraders(cands, { ...defaultRules(800), traders: 4 }).map((x) => x.lead), ["0xbtc1", "0xgold", "0xeth", "0xbtc2"]); // stacks last
 });

@@ -17,8 +17,9 @@ import { applySettings, DEFAULT_SETTINGS, describeSettings, indexStep, sanitizeS
 import { StrikeClient } from "./strike-live.ts";
 import { CUP_MIN_HOLDING, cupStandings, cupToCheck, freshJoinTime, joinCup, joinMessage, oldJoinMessage, resetBlocked, resetMessage, snapshotCup } from "./cup.ts";
 import { verifySignData } from "./cose.ts";
-import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, MIN_COPY_USD, pausedNow, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
+import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, fitting, sharedRules, MIN_COPY_USD, pausedNow, perCopyUsd, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type AutoRules, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
 import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, newSession, publicUser, saveAutoStore, type AutoUser, type Mode } from "./autopilotStore.ts";
+import { steelBuild, steelNotify, steelOn, steelQuote, steelTokens } from "./steelswap.ts";
 import { copiesNow, parkedOf, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { copilotReply, type ChatTurn } from "./copilot.ts";
@@ -345,10 +346,71 @@ async function discoverLeads(): Promise<Lead[]> {
   return items;
 }
 
+// ---------- a wider search for Autopilot: all of Hyperliquid, copied through Strike ----------
+// Strike's own list is its top 300 by its copy score. Strike can copy any Hyperliquid wallet, so every 6 hours Bolt
+// pre-selects the strongest ~200 from Hyperliquid's whole leaderboard (the same entry rules the leaderboard can show),
+// looks each up on Strike (cached), and lets the usual scoring and activity checks decide. The live bot keeps its list.
+const WIDE = { every: 6 * 3_600_000, take: 200 };
+let wide: { at: number; addrs: string[] } = { at: 0, addrs: [] };
+const wideLeadCache = new Map<string, { at: number; lead: Lead | null }>();
+async function wideLeads(now: number): Promise<Lead[]> {
+  if (now - wide.at > WIDE.every) {
+    type Row = { ethAddress: string; accountValue: string; windowPerformances: [string, { pnl: string; roi: string; vlm: string }][] };
+    const board = await fetch("https://stats-data.hyperliquid.xyz/Mainnet/leaderboard", { signal: AbortSignal.timeout(90_000) })
+      .then((r) => (r.ok ? (r.json() as Promise<{ leaderboardRows?: Row[] }>) : null))
+      .catch(() => null);
+    const rows = board?.leaderboardRows ?? [];
+    if (rows.length) {
+      const e = bot.entry;
+      const perf = (r: Row, w: string) => r.windowPerformances.find(([k]) => k === w)?.[1];
+      const picked = rows
+        .map((r) => ({ r, m: perf(r, "month"), w: perf(r, "week"), all: perf(r, "allTime"), acct: n(r.accountValue) }))
+        .filter(
+          (x) =>
+            x.m &&
+            x.w &&
+            x.all &&
+            x.acct >= e.minAccountValue &&
+            x.acct <= 10_000_000 &&
+            n(x.m.roi) >= e.minRoi30d &&
+            n(x.m.roi) <= e.maxRoi30d &&
+            n(x.w.roi) >= e.minRoi7d &&
+            n(x.all.pnl) > 0 &&
+            n(x.m.vlm) > 0 &&
+            n(x.m.vlm) / 30 / x.acct <= e.maxDailyTurnover,
+        )
+        .sort((a, b) => n(b.m!.roi) - n(a.m!.roi))
+        .slice(0, WIDE.take);
+      wide = { at: now, addrs: picked.map((x) => x.r.ethAddress.toLowerCase()) };
+      log(`wide search: ${rows.length} Hyperliquid traders, ${picked.length} pre-selected`);
+    } else wide = { ...wide, at: now - WIDE.every + 30 * 60_000 }; // the board didn't load: try again in half an hour
+  }
+  const out: Lead[] = [];
+  for (let i = 0; i < wide.addrs.length; i += 5) {
+    await Promise.all(
+      wide.addrs.slice(i, i + 5).map(async (a) => {
+        const hit = wideLeadCache.get(a);
+        if (hit && now - hit.at < WIDE.every) return hit.lead && out.push(hit.lead);
+        const lead = await json<Lead>(`${STRIKE}/v2/copy/discover/${a}`).catch(() => null);
+        const ok = lead && lead.platform === bot.entry.platform && lead.address ? lead : null;
+        wideLeadCache.set(a, { at: now, lead: ok });
+        if (ok) out.push(ok);
+      }),
+    );
+  }
+  return out;
+}
+/** Strike's list plus the wide search, each trader once (Strike's entry wins). */
+const withWide = (items: Lead[], more: Lead[]) => {
+  const seen = new Set(items.map((c) => c.address.toLowerCase()));
+  return [...items, ...more.filter((c) => !seen.has(c.address.toLowerCase()))];
+};
+
 async function cycle() {
   const now = Date.now();
   await refreshStrikeMarkets();
   const items = await discoverLeads();
+  const autoItems = withWide(items, await wideLeads(now).catch(() => []));
   const held = new Map<string, Lead | undefined>();
   for (const p of state.positions) {
     const lead = items.find((c) => c.address === p.lead) ?? (await json<Lead>(`${STRIKE}/v2/copy/discover/${p.lead}`).catch(() => undefined));
@@ -359,31 +421,19 @@ async function cycle() {
   // in how many of the last 24 hours did they trade?
   const slot = equityOf(state) / bot.maxLeads;
   // The demo judges traders at demo copy size (larger, so more are copyable); check activity for those too.
+  // Autopilot's candidates too: its list needs the same activity numbers to keep sleepy traders out.
   const shortlist = [
     ...items.filter((c) => entryRejection(c, bot, Math.max(slot, DEMO_SLOT), now) === null),
+    ...autoCandidates(autoItems, now),
     ...[...held.values()].filter((l): l is Lead => !!l),
   ];
-  const seen = new Set<string>();
-  for (const l of shortlist) {
-    if (seen.has(l.address)) continue;
-    seen.add(l.address);
-    const [fills, ch] = await Promise.all([
-      json<Fill[]>(HL, { type: "userFillsByTime", user: l.address, startTime: now - 24 * 3_600_000, aggregateByTime: true }).catch(() => null),
-      json<Clearing>(HL, { type: "clearinghouseState", user: l.address }).catch(() => null),
-    ]);
-    // What they hold right now, so the bot can avoid stacking the same bet across copies.
-    if (ch) l.openBets = (ch.assetPositions ?? []).map(({ position: x }) => ({ coin: x.coin, long: n(x.szi) > 0 }));
-    // How much of what they trade a Strike copy could actually follow.
-    l.strikeShare = strikeShare(fills ?? [], (ch?.assetPositions ?? []).map(({ position: x }) => ({ coin: x.coin, value: n(x.positionValue) })), strikeMarkets);
-    if (!fills) continue; // unknown stays neutral
-    l.activeHours24h = new Set(fills.map((f) => Math.floor(f.time / 3_600_000))).size;
-  }
+  await measureLeads(shortlist, now);
 
   const before = new Set(state.positions.map((p) => p.lead));
   const next = step(state, items, held, bot, now, { markFromStrike: false });
   if (next.lastScan) next.lastScan.strikeMarkets = strikeMarkets?.size ?? 0;
   updateDemoPool([...items, ...[...held.values()].filter((l): l is Lead => !!l)], next, Math.max(slot, DEMO_SLOT), now);
-  updateAutoPool([...items, ...[...held.values()].filter((l): l is Lead => !!l)], next, now);
+  updateAutoPool([...autoItems, ...[...held.values()].filter((l): l is Lead => !!l)], next, now);
   // New copies start tracking from now; closed ones stop.
   for (const p of next.positions) if (!before.has(p.lead)) next.live![p.lead] = { lastFillMs: now, unrealized: NaN };
   for (const k of Object.keys(next.live ?? {})) if (!next.positions.some((p) => p.lead === k)) delete next.live![k];
@@ -509,9 +559,35 @@ const AUTO_FILE = `${DATA}/autopilot.json`;
 const autoStore = loadAutoStore(AUTO_FILE);
 /** The bot's ranked traders for users' bots (best first), refreshed every cycle. */
 let autoPool: Candidate[] = [];
-// Autopilot holds copies, so a calm swing trader is fine: one active hour in the last 24 is enough
-// (the live bot keeps 2). Being idle for days is still ruled out by maxIdleHours.
-const AUTO_RULES = { ...bot, entry: { ...bot.entry, minActiveHours24h: 1 } } as unknown as typeof bot; // bot's config is `as const`
+// Autopilot's traders meet the live bot's standard: traded in the last day, in at least 2 of the last 24 hours, and
+// mostly in Strike's markets. A copy only follows new trades, so a quiet trader leaves the user's money idle.
+const AUTO_RULES = { ...bot, entry: { ...bot.entry, minActiveHours24h: 2, maxIdleHours: 24, minStrikeShare: 0.7 } } as unknown as typeof bot; // bot's config is `as const`
+/** Traders who could make Autopilot's list (best first, capped so the activity check stays light on Hyperliquid). */
+const autoCandidates = (items: Lead[], now: number) =>
+  items
+    .filter((c) => entryRejection(c, AUTO_RULES, AUTO.slot, now) === null)
+    .sort((a, b) => scoreLead(b, AUTO.slot) - scoreLead(a, AUTO.slot))
+    .slice(0, 60);
+
+/** On Hyperliquid: what each trader holds, how much of their trading a Strike copy can follow, and in how many of the
+ *  last 24 hours they traded. Unknown (a failed read) stays neutral. */
+async function measureLeads(list: Lead[], now: number) {
+  const seen = new Set<string>();
+  for (const l of list) {
+    if (seen.has(l.address)) continue;
+    seen.add(l.address);
+    const [fills, ch] = await Promise.all([
+      json<Fill[]>(HL, { type: "userFillsByTime", user: l.address, startTime: now - 24 * 3_600_000, aggregateByTime: true }).catch(() => null),
+      json<Clearing>(HL, { type: "clearinghouseState", user: l.address }).catch(() => null),
+    ]);
+    // What they hold right now, so the bot can avoid stacking the same bet across copies.
+    if (ch) l.openBets = (ch.assetPositions ?? []).map(({ position: x }) => ({ coin: x.coin, long: n(x.szi) > 0 }));
+    // How much of what they trade a Strike copy could actually follow.
+    l.strikeShare = strikeShare(fills ?? [], (ch?.assetPositions ?? []).map(({ position: x }) => ({ coin: x.coin, value: n(x.positionValue) })), strikeMarkets);
+    if (!fills) continue;
+    l.activeHours24h = new Set(fills.map((f) => Math.floor(f.time / 3_600_000))).size;
+  }
+}
 /** The same list for the public demo: short addresses, plus each trader's last week. */
 let autoPreview: PreviewTrader[] = [];
 function updateAutoPool(cands: Lead[], s: BotState, now: number) {
@@ -527,6 +603,11 @@ function updateAutoPool(cands: Lead[], s: BotState, now: number) {
         roi30d: n(c.roi?.["30d"]),
         realWorldShare: realWorldShareOf(c.top_assets),
         coverage: (c.copy_amount_coverage ?? []).map((t) => ({ amount: n(t.copy_amount), share: n(t.coverage) })),
+        strikeShare: c.strikeShare,
+        activeHours24h: c.activeHours24h,
+        holding: c.openBets === undefined ? undefined : c.openBets.length > 0,
+        bets: c.openBets?.map((b) => `${strikeBase(b.coin) ?? b.coin.replace(/^xyz:/, "")}:${b.long ? "L" : "S"}`),
+        roi7d: c.roi?.["7d"] === undefined ? undefined : n(c.roi["7d"]),
       },
     }))
     .sort((a, b) => b.cand.score - a.cand.score)
@@ -604,9 +685,11 @@ const autoSpecs = (u: AutoUser) => {
   const rules = effectiveRules(u);
   if (!rules || u.mode === "off") return [];
   const now = Date.now();
-  const out = u.mode === "autopilot" ? droppedLeads(u, now) : new Set<string>();
+  const out = droppedLeads(u, now); // traders set aside for a day: by Autopilot, or by the user's "Switch trader"
   const pool = autoPool.filter((c) => !((u.cooldown?.[c.lead.toLowerCase()] ?? 0) > now) && !out.has(c.lead.toLowerCase()));
-  return copySpecs(pickTraders(pool, rules, Object.keys(u.managed).filter((l) => !out.has(l.toLowerCase()))), rules, strikeSymbols);
+  // Normally a trader being copied stays while they still fit; right after a rules change the pick starts fresh.
+  const held = u.repick ? [] : Object.keys(u.managed).filter((l) => !out.has(l.toLowerCase()));
+  return copySpecs(pickTraders(pool, rules, held), rules, strikeSymbols);
 };
 /** A ranked trader's numbers for Autopilot's review (autoPool and autoPreview share their order). */
 function traderStats(lead: string): TraderStats | undefined {
@@ -642,6 +725,107 @@ async function autopilotReview(u: AutoUser, now: number): Promise<boolean> {
   if (line) logUser(u, now, line);
   return JSON.stringify([effectiveRules(u), [...droppedLeads(u, now)]]) !== before;
 }
+// ---------- a trader's card (the app's trader window) ----------
+// Only traders Bolt follows (its ranking, users' copies, the live bot), looked up by full address or the app's short
+// 0x1234…abcd form; the answer echoes the form it was asked with, so the public demo never learns full addresses.
+const traderCache = new Map<string, { at: number; data: unknown }>();
+function knownLead(asked: string): string | null {
+  const a = asked.trim().toLowerCase();
+  if (!/^0x[0-9a-f]{3,}(…[0-9a-f]{3,})?$/.test(a)) return null;
+  const all = [...autoPool.map((c) => c.lead), ...Object.values(autoStore.users).flatMap((u) => Object.keys(u.managed)), ...Object.keys(ctl.managed), ...state.positions.map((p) => p.lead)];
+  const [head, tail] = a.split("…");
+  return all.find((l) => (tail === undefined ? l.toLowerCase() === a : l.toLowerCase().startsWith(head) && l.toLowerCase().endsWith(tail))) ?? null;
+}
+/** A trader's ranking numbers without their address (the card echoes the address it was asked with). */
+function publicStats(lead: string) {
+  const st = traderStats(lead);
+  const c = autoPool.find((x) => x.lead.toLowerCase() === lead.toLowerCase());
+  return st ? { score: st.score, dd: st.dd, roi7d: st.roi7d, roi30d: st.roi30d, realWorldShare: st.realWorldShare, strikeShare: c?.strikeShare ?? null, activeHours24h: c?.activeHours24h ?? null } : null;
+}
+async function traderCard(asked: string) {
+  const lead = knownLead(asked);
+  if (!lead) return null;
+  const key = lead.toLowerCase();
+  const hit = traderCache.get(key);
+  if (hit && Date.now() - hit.at < 60_000) return { ...(hit.data as object), lead: asked };
+  const now = Date.now();
+  type Portfolio = [string, { accountValueHistory: [number, string][]; pnlHistory: [number, string][]; vlm: string }][];
+  const [portfolio, main, xyz, fills] = await Promise.all([
+    json<Portfolio>(HL, { type: "portfolio", user: lead }).catch(() => null),
+    json<Clearing>(HL, { type: "clearinghouseState", user: lead }).catch(() => null),
+    json<Clearing>(HL, { type: "clearinghouseState", user: lead, dex: "xyz" }).catch(() => null),
+    json<Fill[]>(HL, { type: "userFillsByTime", user: lead, startTime: now - 14 * 86_400_000, aggregateByTime: true }).catch(() => null),
+  ]);
+  const period = (k: string) => portfolio?.find(([name]) => name === k)?.[1];
+  const last = (xs: [number, string][] | undefined) => (xs?.length ? n(xs[xs.length - 1][1]) : null);
+  const month = period("month");
+  const curve = (month?.pnlHistory ?? []).map(([t, v]) => [t, Math.round(n(v))] as [number, number]);
+  const name = (coin: string) => strikeBase(coin) ?? coin.replace(/^xyz:/, "");
+  const positions = [...(main?.assetPositions ?? []), ...(xyz?.assetPositions ?? [])].map(({ position: p }) => ({
+    market: name(p.coin),
+    long: n(p.szi) > 0,
+    valueUsd: Math.round(n(p.positionValue)),
+    entry: n(p.entryPx),
+    pnl: Math.round(n(p.unrealizedPnl) * 100) / 100,
+    onStrike: copyable(p.coin),
+  }));
+  const closes = (fills ?? []).filter((f) => /^Close/.test(f.dir) && n(f.closedPnl) !== 0);
+  const rank = autoPool.findIndex((c) => c.lead.toLowerCase() === key);
+  const data = {
+    rank: rank >= 0 ? rank + 1 : null,
+    ranked: autoPool.length,
+    stats: publicStats(lead),
+    accountUsd: last(month?.accountValueHistory) !== null ? Math.round(last(month?.accountValueHistory)!) : null,
+    pnl: { day: last(period("day")?.pnlHistory), week: last(period("week")?.pnlHistory), month: last(month?.pnlHistory), allTime: last(period("allTime")?.pnlHistory) },
+    volume30d: month ? Math.round(n(month.vlm)) : null,
+    curve: curve.filter((_, i) => i % Math.max(1, Math.ceil(curve.length / 60)) === 0 || i === curve.length - 1),
+    positions,
+    trades: (fills ?? [])
+      .slice(-25)
+      .reverse()
+      .map((f) => ({ at: f.time, market: name(f.coin), dir: f.dir, px: n(f.px), sizeUsd: Math.round(n(f.px) * n(f.sz)), pnl: Math.round(n(f.closedPnl) * 100) / 100, onStrike: copyable(f.coin) })),
+    closes14d: { count: closes.length, wins: closes.filter((f) => n(f.closedPnl) > 0).length },
+    at: now,
+  };
+  traderCache.set(key, { at: now, data });
+  if (traderCache.size > 200) traderCache.delete(traderCache.keys().next().value!);
+  return { ...data, lead: asked };
+}
+
+/** Why the bot copies fewer traders than the rules ask for (null when it doesn't). */
+function fewerReason(u: AutoUser): string | null {
+  const rules = effectiveRules(u);
+  const got = Object.keys(u.managed).length;
+  if (!rules || u.mode === "off" || !got || got >= rules.traders) return null;
+  const per = perCopyUsd(rules);
+  const now = Date.now();
+  const fit = fitting(autoPool, rules);
+  const aside = fit.filter((c) => droppedLeads(u, now).has(c.lead.toLowerCase())).length;
+  const many = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
+  return (
+    `Copying ${many(got, "trader")} instead of ${rules.traders}: at $${per.toFixed(0)} per copy only ${many(fit.length - aside, "ranked trader")} ${fit.length - aside === 1 ? "fits" : "fit"} right now` +
+    (aside ? ` (${aside} more ${aside === 1 ? "is" : "are"} set aside after you switched; back within 2 hours)` : "") +
+    `. ${got === 1 ? "It gets" : "They get"} the whole $${(rules.budgetUsd * RISK_LEVELS[rules.risk].deploy).toFixed(0)}.${budgetHint(rules)}`
+  );
+}
+
+/** A trader the user switched away from sits out this long (short, so a small budget doesn't run out of choices). */
+const SWITCH_SKIP_MS = 2 * 3_600_000;
+
+/** " At $100 per copy (a $100 budget), 14 traders fit." — the smallest bigger copy that opens up a real choice, or "". */
+function budgetHint(rules: AutoRules): string {
+  const per = perCopyUsd(rules);
+  for (const target of [100, 150, 200, 300, 500]) {
+    if (target <= per) continue;
+    const count = fitting(autoPool, rules, [], target).length;
+    if (count >= 5) {
+      const budget = Math.ceil((target * rules.traders) / RISK_LEVELS[rules.risk].deploy / 10) * 10;
+      return ` At $${target} per copy (a $${budget} budget${rules.traders > 1 ? ` for ${rules.traders} traders` : ""}), ${count} traders fit.`;
+    }
+  }
+  return "";
+}
+
 /** Why a switched-on bot has nothing to copy, in the user's words (null when copies can start). */
 function idleReason(u: AutoUser): string | null {
   const rules = effectiveRules(u);
@@ -654,8 +838,15 @@ function idleReason(u: AutoUser): string | null {
   const deployed = rules.budgetUsd * RISK_LEVELS[rules.risk].deploy;
   if (deployed < MIN_COPY_USD)
     return `Your rules put $${deployed.toFixed(2)} to work, under the $${MIN_COPY_USD} a copy needs to follow a trader's orders. Raise the budget or the risk level to start.`;
-  if (!autoSpecs(u).length)
+  if (!autoSpecs(u).length) {
+    // Usually the copy size: small copies can follow only a few traders. Say how many, and what a bigger copy opens up.
+    const per = perCopyUsd(rules);
+    const fit = fitting(autoPool, rules).length;
+    if (fit > 0)
+      return `You've set aside every trader a $${per.toFixed(0)} copy can follow well today (${fit} of ${autoPool.length}). They're back within a day.${budgetHint(rules)}`;
+    if (per < 500) return `At $${per.toFixed(0)} per copy, none of the ${autoPool.length} ranked traders can be followed well: copies that small skip most of their trades.${budgetHint(rules)}`;
     return `No ranked trader fits your rules right now (${autoPool.length} ranked). The bot checks again every few minutes; "Everything" for markets or fewer traders gives it more to pick from.`;
+  }
   // There were picks, but Strike took none of them (the reasons are on the activity log just before this).
   if (u.lastSyncAt) return "Strike didn't accept the copies yet (see the reasons below). The bot tries other traders every few minutes.";
   return null;
@@ -674,7 +865,14 @@ async function syncAutopilot(only?: AutoUser) {
     for (const u of only ? [only] : Object.values(autoStore.users)) {
       // Users with the bot off still sync (cheap): that's when parked copy money moves back to their balance.
       if (autoPool.length) {
+        // Traders set aside under the old one-day rule come back within half an hour (switching now sets them aside for 2h).
+        for (const d of Object.values(u.drops ?? {})) if (d.reason === "you switched away from them" && d.until > Date.now() + SWITCH_SKIP_MS) d.until = Date.now() + 30 * 60_000;
         await syncUser(u, autoClient(u), autoSpecs(u), Date.now());
+        delete u.repick; // the fresh pick after a rules change is done
+        // Fewer copies than the rules ask for: say why, once, instead of quietly giving one trader everything.
+        const note = fewerReason(u);
+        if (note && note !== u.note) logUser(u, Date.now(), note);
+        u.note = note ?? undefined;
         // Autopilot mode: review when something calls for it; a change takes effect right away.
         if (u.mode === "autopilot" && (await autopilotReview(u, Date.now()))) {
           const t = Date.now();
@@ -747,6 +945,16 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
   if (url.pathname === "/autopilot/earn") return { status: 200, data: { slp: await slpInfo(Date.now()) } };
   if (url.pathname === "/autopilot/impact") return { status: 200, data: impactSummary(Date.now()) };
   if (url.pathname === "/autopilot/marks") return { status: 200, data: { at: Date.now(), marks: Object.fromEntries(autoMarks) } };
+  if (url.pathname === "/autopilot/trader") {
+    const out = await traderCard(String(url.searchParams.get("lead") ?? ""));
+    return out ? { status: 200, data: out } : { status: 404, data: { error: "That trader isn't one Bolt follows." } };
+  }
+  // A shared setup ("start with my rules"): the shape of the rules and the verified result, never a budget or address.
+  const setupId = /^\/autopilot\/setup\/([0-9a-f]{12})$/.exec(url.pathname)?.[1];
+  if (setupId) {
+    const u = Object.values(autoStore.users).find((x) => x.shareId === setupId);
+    return u?.rules ? { status: 200, data: { rules: sharedRules(u.rules), card: resultCard(u) } } : { status: 404, data: { error: "That setup link isn't valid any more." } };
+  }
   // A shared result card: return on running copies, rules and trader count only (no amounts, no address).
   const cardId = /^\/autopilot\/card\/([0-9a-f]{12})$/.exec(url.pathname)?.[1];
   if (cardId) {
@@ -772,7 +980,12 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
         rules: sanitizeRules(c.rules, maxBudgetUsd),
         maxBudgetUsd,
         balance: typeof c.balance === "number" ? c.balance : null,
-        copies: (Array.isArray(c.copies) ? c.copies : []).slice(0, 6).map((x: { lead?: unknown; amount?: unknown; pnl?: unknown }) => ({ lead: String(x.lead ?? "").slice(0, 64), amount: n(x.amount), pnl: n(x.pnl) })),
+        copies: (Array.isArray(c.copies) ? c.copies : []).slice(0, 6).map((x: { lead?: unknown; amount?: unknown; pnl?: unknown; name?: unknown }) => ({
+          lead: String(x.lead ?? "").slice(0, 64),
+          amount: n(x.amount),
+          pnl: n(x.pnl),
+          ...(typeof x.name === "string" && x.name.trim() ? { name: x.name.replace(/["\n\r]/g, "").trim().slice(0, 32) } : {}),
+        })),
         mode: ["off", "on", "autopilot"].includes(String(c.mode)) ? (c.mode as "off" | "on" | "autopilot") : null,
         sinceStart: typeof c.sinceStart === "number" && Number.isFinite(c.sinceStart) ? c.sinceStart : null,
         today: typeof c.today === "number" && Number.isFinite(c.today) ? c.today : null,
@@ -904,6 +1117,7 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
     if (!rules) return { status: 400, data: { error: "Those rules don't look right." } };
     u!.rules = rules;
     delete u!.tuned; // new limits: Autopilot starts again from the user's own rules
+    u!.repick = true; // new rules, a fresh pick: copies that aren't among the best fits for them are replaced now
     logUser(u!, now, `Rules set: ${describeRules(rules)}.`);
     saveAutoStore(AUTO_FILE, autoStore);
     if (u!.mode !== "off") void syncAutopilot(u);
@@ -923,11 +1137,58 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
         ? "Bot switched off: stopping its copies."
         : mode === "autopilot"
           ? "Autopilot on: it watches your copies and adjusts them inside your limits (swaps weak traders, steps risk down after losses). It never goes beyond your settings."
-          : "Bot switched on.",
+          : "Bot switched on. Copies open the traders' current positions right away; a trader who's between trades is joined on their next one, which can take a while.",
     );
     saveAutoStore(AUTO_FILE, autoStore);
     void syncAutopilot(u);
     return { status: 200, data: { user: publicUser(u!) } };
+  }
+  if (url.pathname === "/autopilot/swap") {
+    // "Switch trader": stop this copy and let the bot pick the next best fit; the trader is skipped for a day.
+    const lead = String(body.lead ?? "").toLowerCase();
+    if (!Object.keys(u!.managed).some((l) => l.toLowerCase() === lead)) return { status: 400, data: { error: "Your bot isn't copying that trader." } };
+    // Don't leave the user with nothing: only switch when someone else fits their copy size.
+    const rules = effectiveRules(u!);
+    const away = new Set([...droppedLeads(u!, now), lead, ...Object.keys(u!.managed).map((l) => l.toLowerCase())]);
+    const others = rules ? fitting(autoPool, rules).filter((c) => !away.has(c.lead.toLowerCase()) && !((u!.cooldown?.[c.lead.toLowerCase()] ?? 0) > now)) : [];
+    if (rules && !others.length)
+      return { status: 409, data: { error: `No other trader fits a $${perCopyUsd(rules).toFixed(0)} copy right now, so this one stays.${budgetHint(rules)}` } };
+    u!.drops = { ...(u!.drops ?? {}), [lead]: { until: now + SWITCH_SKIP_MS, reason: "you switched away from them" } };
+    logUser(u!, now, `Switching away from ${lead.slice(0, 6)}…${lead.slice(-4)} as you asked: the bot picks the next best fit and leaves them out for 2 hours.`);
+    saveAutoStore(AUTO_FILE, autoStore);
+    void syncAutopilot(u);
+    return { status: 200, data: { user: publicUser(u!) } };
+  }
+  // Deposit any Cardano token: SteelSwap swaps it to ADA in the user's own wallet (their transaction, their fee),
+  // then the ADA goes to Strike as a normal deposit. Built for the connected wallet's address only.
+  if (url.pathname.startsWith("/autopilot/swap/")) {
+    if (!steelOn()) return { status: 503, data: { error: "Token deposits aren't switched on yet. ADA deposits work." } };
+    const what = url.pathname.slice("/autopilot/swap/".length);
+    if (what === "notify") {
+      const txHash = String(body.txHash ?? "");
+      if (/^[0-9a-f]{64}$/.test(txHash)) {
+        void steelNotify(txHash, String(body.txCbor ?? ""));
+        logUser(u!, now, `Swapped a token to ADA through SteelSwap for a deposit (${txHash.slice(0, 8)}…).`);
+        saveAutoStore(AUTO_FILE, autoStore);
+      }
+      return { status: 200, data: { ok: true } };
+    }
+    try {
+      if (what === "tokens") return { status: 200, data: { tokens: await steelTokens(Array.isArray(body.units) ? (body.units as unknown[]).map(String) : []) } };
+      const unit = String(body.unit ?? "");
+      const amount = String(body.amount ?? "");
+      if (!/^[0-9a-f]{56,120}$/.test(unit) || !/^[1-9][0-9]{0,30}$/.test(amount)) return { status: 400, data: { error: "Pick a token and an amount." } };
+      if (what === "quote") return { status: 200, data: await steelQuote(unit, amount) };
+      if (what === "build") {
+        const expected = Number(body.expectedLovelace);
+        if (!(expected > 0)) return { status: 400, data: { error: "Get a quote first." } };
+        const utxos = Array.isArray(body.utxos) ? (body.utxos as unknown[]).map(String).filter((x) => /^[0-9a-f]+$/.test(x)).slice(0, 300) : [];
+        return { status: 200, data: await steelBuild({ address: u!.address, utxos, unit, amount, expectedLovelace: expected, slippageBps: 100 }) };
+      }
+    } catch (e) {
+      return { status: 502, data: { error: `SteelSwap: ${e instanceof Error ? e.message : String(e)}` } };
+    }
+    return { status: 404, data: { error: "not found" } };
   }
   if (url.pathname === "/autopilot/deposit") {
     // ADA (trading balance) or RealFi sUSDrf (Borrow & Earn collateral) from the user's wallet:
@@ -1416,9 +1677,14 @@ createServer(async (req, res) => {
 // deploy: rank once now, without trading. The next cycle refines it with Hyperliquid activity.
 void refreshStrikeMarkets()
   .then(() => discoverLeads())
-  .then((items) => {
-    if (!autoPool.length) updateAutoPool(items, state, Date.now());
+  .then(async (strikeList) => {
+    if (!autoPool.length) updateAutoPool(strikeList, state, Date.now());
     log(`autopilot: ${autoPool.length} traders ranked at start`);
+    // Then the wide search and activity: done now rather than at the next cycle.
+    const items = withWide(strikeList, await wideLeads(Date.now()).catch(() => []));
+    await measureLeads(autoCandidates(items, Date.now()), Date.now());
+    updateAutoPool(items, state, Date.now());
+    log(`autopilot: ${autoPool.length} traders after the activity check`);
     void refreshAutoMarks();
   })
   .catch(() => {});

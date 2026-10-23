@@ -61,6 +61,49 @@ export function copiesNow(u: AutoUser, active: CopySub[], rows: CopyPosition[] |
   });
 }
 
+/** Money in minus money out on the user's Strike account (every 5 minutes), so profit = what's there − what was put in. */
+async function readFlows(u: AutoUser, client: StrikeClient, now: number) {
+  if (u.flows && now - u.flows.at < 5 * 60_000) return;
+  try {
+    const p = await client.request<{ capital_flows?: Record<string, string> }>("GET", "/v2/portfolio");
+    const f = p.data?.capital_flows;
+    if (f) u.flows = { netIn: num(f.all_time_deposits) - num(f.all_time_withdrawals) + num(f.all_time_transfer_in) - num(f.all_time_transfer_out), at: now };
+  } catch {
+    // display-only: a failed read never holds up the sync
+  }
+}
+const num = (v: unknown) => Number(v) || 0;
+
+/** Strike's reasons for not copying an order, in the user's words. */
+export function skipReason(code: string): string {
+  if (code === "max_margin_per_symbol") return "it would put more of this copy on one coin than its limit allows";
+  if (code === "max_margin_total") return "this copy's money is already fully in use";
+  if (code === "zero_size") return "at this copy's size the trade rounds down to nothing (a bigger copy can follow it)";
+  if (code === "excluded_symbol") return "your rules leave that market out";
+  if (/leverage/.test(code)) return "Strike couldn't set the leverage for it";
+  if (/market_order/.test(code)) return "it broke one of Strike's order rules (size or price limits)";
+  return code.replace(/_/g, " ");
+}
+
+/** Orders Strike couldn't copy for this user, told once each (newest first, at most 3 a sync): a copy that stays empty
+ *  should never fail silently. Only this user's own copies, over the last day. */
+async function tellSkips(u: AutoUser, client: StrikeClient, now: number) {
+  const ours = new Set(Object.values(u.managed));
+  if (!ours.size) return;
+  type Failed = { orders?: { id: string; subscription_id: string; lead_account_id: string; symbol: string; error_message?: string | null; created_at_ms: number }[] };
+  let r: { data: Failed } | null = null;
+  try {
+    r = await client.request<Failed>("GET", "/v2/copy/orders?status=failed&limit=20");
+  } catch {
+    return; // a missing reason never holds up the sync
+  }
+  const told = new Set(u.skipsTold ?? []);
+  const fresh = (r?.data?.orders ?? []).filter((o) => ours.has(o.subscription_id) && !told.has(o.id) && now - o.created_at_ms < 86_400_000 && o.error_message);
+  for (const o of fresh.slice(0, 3).reverse())
+    logUser(u, now, `Couldn't copy a ${o.symbol.replace(/-USD$/, "")} trade from ${short(o.lead_account_id)}: ${skipReason(o.error_message!)}.`);
+  u.skipsTold = [...fresh.map((o) => o.id), ...(u.skipsTold ?? [])].slice(0, 100);
+}
+
 /**
  * One sync for one user. Mutates the user. Never throws: errors land on the user's log.
  * `specs` empty = stop everything (the user switched off, or the daily limit was hit).
@@ -97,6 +140,8 @@ export async function syncUser(u: AutoUser, client: StrikeClient, specs: CopySpe
     }
     const rows = await client.copyPositions(true).catch(() => null);
     u.copies = copiesNow(u, active, rows);
+    await tellSkips(u, client, now);
+    await readFlows(u, client, now);
     // Daily loss limit: today's change in the copies' profit, against the budget.
     const pnl = u.copies.reduce((t, c) => t + c.pnl, 0);
     // The dashboard's chart: profit on the running copies at each sync (while the bot runs or holds copies).

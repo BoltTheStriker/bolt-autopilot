@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AutoMode } from "@/lib/autopilotApi";
 import type { InstalledWallet } from "@/lib/wallet";
 import { replayWeek, type Replay } from "@/lib/rulesReplay";
-import { boostOf, describeRules, MIN_COPY_USD, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Markets, type PreviewTrader, type Risk } from "@/worker/autopilot";
+import { boostOf, describeRules, fitting, MIN_COPY_USD, perCopyUsd, RISK_LEVELS, sanitizeRules, type AutoRules, type Goal, type Markets, type PreviewTrader, type Risk } from "@/worker/autopilot";
 import { MoneyPath } from "./strike";
 import { ChoiceCards, Slider, type TourStep } from "./ui";
 
@@ -221,6 +221,23 @@ export function DepositPending({ amount, asset, txHash, onContinue }: { amount: 
   );
 }
 
+/** How many ranked traders a copy of this size can follow well, and the copy size that opens up a real choice. A copy
+ *  follows each trade in proportion to its money, so small copies skip more of a trader's trades. */
+function FitHint({ rules, traders }: { rules: AutoRules; traders: PreviewTrader[] }) {
+  const per = perCopyUsd(rules);
+  const fit = fitting(traders, rules).length;
+  const enough = fit >= Math.max(rules.traders * 2, 5); // room to pick and to switch
+  const next = [100, 150, 200, 300, 500].find((t) => t > per && fitting(traders, rules, [], t).length >= Math.max(rules.traders * 2, 5));
+  return (
+    <p className={`rounded-xl border px-3.5 py-2.5 text-xs leading-relaxed ${enough ? "border-mint/25 bg-mint/[0.05] text-soft" : "border-gold/35 bg-gold/[0.07] text-gold"}`}>
+      At ${per.toFixed(0)} per copy, Bolt can follow <span className="font-semibold">{fit}</span> of {traders.length} ranked traders well.
+      {!enough && (fit < rules.traders ? ` That's fewer than the ${rules.traders} you asked for.` : " That's a thin choice.")}
+      {!enough && next && ` At $${next} per copy, ${fitting(traders, rules, [], next).length} fit: raise the budget or copy fewer traders.`}
+      {enough && " Bigger copies can follow more of each trader's trades."}
+    </p>
+  );
+}
+
 /** An optional whole-bot target in dollars: empty = off. */
 function TargetField({ label, sign, value, placeholder, onChange }: { label: string; sign: string; value: number | null; placeholder: string; onChange: (v: number | null) => void }) {
   const [text, setText] = useState(value === null ? "" : String(value));
@@ -316,6 +333,7 @@ export function RulesCard({
           <Slider label="Budget for the bot" value={r.budgetUsd} min={50} max={maxBudget} step={10} format={(v) => `$${v.toFixed(0)}`} hint={budgetHint ?? `Beta limit $${maxBudget.toFixed(0)}`} onChange={(budgetUsd) => set({ budgetUsd })} />
           <Slider label="Traders to copy" value={r.traders} min={1} max={6} step={1} format={(v) => String(v)} hint="More traders = smoother, smaller copies" onChange={(traders) => set({ traders })} />
         </div>
+        {traders && traders.length > 0 && <FitHint rules={r} traders={traders} />}
         <div className="grid gap-3 sm:grid-cols-2">
           <TargetField label="Stop when I'm up" sign="+" value={r.stopAtProfitUsd ?? null} placeholder="20" onChange={(stopAtProfitUsd) => set({ stopAtProfitUsd })} />
           <TargetField label="Stop if I'm down" sign="−" value={r.stopAtLossUsd ?? null} placeholder="30" onChange={(stopAtLossUsd) => set({ stopAtLossUsd })} />
