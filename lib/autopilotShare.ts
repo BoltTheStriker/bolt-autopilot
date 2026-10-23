@@ -4,7 +4,7 @@ import type { Goal, Markets, Risk } from "@/worker/autopilot";
 
 export type ShareCard = {
   kind: "demo" | "real";
-  ret: number; // return as a fraction (0.034 = +3.4%): demo on its $1,000, real on the money in running copies
+  ret: number; // return as a fraction (0.034 = +3.4%): demo on its $1,000; real since the account started (basis "all") or on its running copies
   pnl: number | null; // demo only: dollars on pretend money (real cards never show amounts)
   traders: number;
   since: number; // ms
@@ -12,6 +12,7 @@ export type ShareCard = {
   goal: Goal;
   markets: Markets;
   curve: number[]; // demo: account value since the start, downsampled; real: []
+  basis?: "all" | "copies"; // real cards: what `ret` measures
 };
 
 const RISKS: Risk[] = ["low", "medium", "high"];
@@ -64,7 +65,7 @@ export function parseRealCard(j: unknown): ShareCard | null {
   const since = Number(o.since);
   if (!Number.isFinite(ret) || !Number.isInteger(traders) || !Number.isFinite(since)) return null;
   if (!RISKS.includes(o.risk as Risk) || !GOALS.includes(o.goal as Goal) || !MARKETS.includes(o.markets as Markets)) return null;
-  return { kind: "real", ret, pnl: null, traders, since, risk: o.risk as Risk, goal: o.goal as Goal, markets: o.markets as Markets, curve: [] };
+  return { kind: "real", ret, pnl: null, traders, since, risk: o.risk as Risk, goal: o.goal as Goal, markets: o.markets as Markets, curve: [], basis: o.basis === "all" ? "all" : "copies" };
 }
 
 export const RISK_LABEL: Record<Risk, string> = { low: "Low risk", medium: "Medium risk", high: "High risk" };

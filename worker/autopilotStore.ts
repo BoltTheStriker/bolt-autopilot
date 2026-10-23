@@ -45,6 +45,7 @@ export type AutoUser = {
   fundsTold?: string; // the "not enough free balance" notice already shown (free dollars:copy size), so it isn't repeated
   repick?: boolean; // the rules just changed: the next sync picks traders fresh
   flows?: { netIn: number; at: number }; // money put into the Strike account minus taken out (deposits, withdrawals, transfers)
+  worth?: { usd: number; at: number }; // everything on Strike when the user last opened the app (for the share card's profit)
   note?: string; // why the bot runs fewer copies than the rules ask for (null when it doesn't)
   /** Profit on the running copies at each sync (for the dashboard's chart), newest last, at most 1,000. */
   history?: { at: number; pnl: number; working: number }[];

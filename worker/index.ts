@@ -1108,6 +1108,13 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
       readFlows(u!, client, now), // with the balance: a deposit Strike just credited is never shown as profit
     ]);
     const slp = vaults?.data.positions?.find((p) => p.vault_id === SLP_ID);
+    // Everything the user has on Strike, as the dashboard counts it (main account with the copies running from it,
+    // first-version copies in their own sub-accounts, money parked there): the share card's profit uses the same.
+    if (acct)
+      u!.worth = {
+        usd: n(acct.margin_balance ?? acct.wallet_balance) + (liveNow?.copies ?? u!.copies ?? []).filter((c) => c.isolated).reduce((t, c) => t + c.amount + c.pnl, 0) + parked.reduce((t, p) => t + p.available, 0),
+        at: now,
+      };
     return {
       status: 200,
       data: {
@@ -1283,10 +1290,15 @@ function resultCard(u: AutoUser) {
   const working = copies.reduce((t, c) => t + c.amount, 0);
   const pnl = copies.reduce((t, c) => t + c.pnl, 0);
   const started = u.log.find((l) => /^(Bot switched on|Autopilot on)/.test(l.text))?.at; // newest first: this run's start
+  // The dashboard's "Profit since start": all that's on Strike minus all that was put in, so copies that already ended
+  // (and their losses) count. Only the running copies when that isn't known yet.
+  const netIn = u.flows?.netIn ?? 0;
+  const allTime = u.worth && netIn > 0 ? (u.worth.usd - netIn) / netIn : null;
   return {
-    ret: working > 0 ? Math.round((pnl / working) * 1e5) / 1e5 : 0,
+    ret: Math.round((allTime ?? (working > 0 ? pnl / working : 0)) * 1e5) / 1e5,
     traders: copies.length,
-    since: started ?? u.createdAt,
+    since: allTime !== null ? u.createdAt : (started ?? u.createdAt),
+    basis: allTime !== null ? "all" : "copies",
     risk: u.rules!.risk,
     goal: u.rules!.goal,
     markets: u.rules!.markets,

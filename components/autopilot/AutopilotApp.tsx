@@ -446,13 +446,15 @@ export function AutopilotApp() {
       };
     }
     if (!view.demo && session && user?.rules && n > 0) {
+      // The dashboard's "Profit since start" (copies that already ended count); the running copies only if it's unknown.
+      const all = view.allTime && view.allTime.base > 0 ? view.allTime.pnl / view.allTime.base : null;
       const working = view.copies.reduce((t, c) => t + c.amount, 0);
-      const ret = working > 0 ? view.copies.reduce((t, c) => t + c.pnl, 0) / working : 0;
+      const ret = all ?? (working > 0 ? view.copies.reduce((t, c) => t + c.pnl, 0) / working : 0);
       const s = session;
       return {
         kind: "real",
         getId: () => autopilot.share(s).then((r) => r.id),
-        text: `My Bolt Autopilot on Strike: ${pct(ret)} on my running copies, ${n} trader${n === 1 ? "" : "s"}, ${RISK_LABEL[user.rules.risk].toLowerCase()}, ${GOAL_LABEL[user.rules.goal].toLowerCase()}.`,
+        text: `My Bolt Autopilot on Strike: ${pct(ret)} ${all !== null ? "since I started" : "on my running copies"}, ${n} trader${n === 1 ? "" : "s"}, ${RISK_LABEL[user.rules.risk].toLowerCase()}, ${GOAL_LABEL[user.rules.goal].toLowerCase()}.`,
       };
     }
     return null;

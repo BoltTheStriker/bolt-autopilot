@@ -46,7 +46,9 @@ export async function GET(req: Request) {
   const demo = c.kind === "demo";
   const sub = demo
     ? `${c.pnl === null ? "" : `${c.pnl >= 0 ? "+" : "−"}$${Math.abs(c.pnl).toFixed(2)} `}on $1,000 since ${day(c.since)}`
-    : `on running copies · live since ${day(c.since)}`;
+    : c.basis === "all"
+      ? `since starting on ${day(c.since)} · deposits don't count`
+      : `on running copies · live since ${day(c.since)}`;
   const badge = demo ? "DEMO · PRETEND MONEY" : "REAL MONEY ON STRIKE";
   const chips = [RISK_LABEL[c.risk], GOAL_LABEL[c.goal], MARKETS_LABEL[c.markets], `${c.traders} trader${c.traders === 1 ? "" : "s"} copied`];
   const foot = demo ? "Try it with demo money" : "Numbers from the Bolt server";
