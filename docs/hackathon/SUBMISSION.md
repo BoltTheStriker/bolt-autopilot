@@ -1,7 +1,7 @@
 # Bolt Autopilot · Strike Hackathon submission
 
 **The easiest way into Strike.**
-Live: https://autopilot.boltstriker.io (private beta on Strike mainnet; anyone can run the demo)
+Live: https://autopilot.boltstriker.io (open on Strike mainnet during the launch days, then for $BOLT holders; anyone can run the demo)
 Impact, flywheel and benchmark: https://autopilot.boltstriker.io/impact
 Code: https://github.com/BoltTheStriker/bolt-autopilot (private; judges are invited)
 Builder code: `bolt_dev` · Team: the $BOLT community (X: @bolthestriker)
