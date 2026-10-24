@@ -129,5 +129,7 @@ export function publicUser(u: AutoUser) {
   return { address: u.address, accountId: u.accountId, network: u.network, createdAt: u.createdAt, rules: u.rules, mode: u.mode, copies: u.copies ?? [], log: u.log.slice(0, 40), lastSyncAt: u.lastSyncAt, lastError: u.lastError, idle: u.idle ?? null,
     // What Autopilot runs with right now, when it changed something (always inside the user's rules).
     autopilot: u.tuned ? { rulesText: describeRules(u.tuned.rules), reason: u.tuned.reason, at: u.tuned.at } : null, reviewedAt: u.reviewedAt ?? null,
-    history: thin(u.history ?? [], 300), decisions: (u.decisions ?? []).slice(0, 10), run: u.run ?? null, netIn: u.flows?.netIn ?? null, note: u.note ?? null };
+    history: thin(u.history ?? [], 300), decisions: (u.decisions ?? []).slice(0, 10), run: u.run ?? null, netIn: u.flows?.netIn ?? null, note: u.note ?? null,
+    // Has this bot ever run? (The log the app gets is short, so it can't tell from "Bot switched on" alone.)
+    started: Object.keys(u.volume ?? {}).length > 0 || (u.history?.length ?? 0) > 0 || u.log.some((l) => /^(Bot switched on|Autopilot on)/.test(l.text)) };
 }

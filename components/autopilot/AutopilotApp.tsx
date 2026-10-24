@@ -321,7 +321,7 @@ export function AutopilotApp() {
   const user = me?.user;
   const savedRules = demoOn ? demo.rules : (user?.rules ?? null);
   // Once the bot has run, stopping it keeps the dashboard (money, history, Start); "Go live" is only for the first start.
-  const hasStarted = !!user && (user.log.some((l) => /^(Bot switched on|Autopilot on)/.test(l.text)) || user.copies.length > 0 || (me?.parked ?? 0) > 0);
+  const hasStarted = !!user && (!!user.started || user.log.some((l) => /^(Bot switched on|Autopilot on)/.test(l.text)) || user.copies.length > 0 || (me?.parked ?? 0) > 0);
   const step = demoOn
     ? !demo.rules
       ? 2
@@ -951,6 +951,7 @@ export function AutopilotApp() {
           onUsedWallet={rememberWallet}
           address={me.user.address}
           available={me.balance?.available ?? 0}
+          settling={me.user.copies.length ? 0 : Math.max(0, (me.balance?.equity ?? 0) - (me.balance?.available ?? 0))}
           parked={me.parked ?? 0}
           parkedSubs={me.parkedSubs ?? []}
           accountId={me.user.accountId}

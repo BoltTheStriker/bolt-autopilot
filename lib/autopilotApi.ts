@@ -25,6 +25,7 @@ export type AutoUserView = {
   run?: { since: number; closed: number } | null; // since Start: the profit of copies that already ended (for the stop targets)
   netIn?: number | null; // money put into the Strike account minus taken out: all-time profit = total − netIn
   note?: string | null; // why the bot runs fewer copies than the rules ask for
+  started?: boolean; // the bot has run before (stopping it keeps the dashboard)
   history?: { at: number; pnl: number; working: number }[]; // profit on the running copies at each sync
   liveAt?: number | null; // set when `copies` were just read live from Strike (not the last sync)
 };

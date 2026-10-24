@@ -19,6 +19,7 @@ export function WithdrawModal({
   wallets,
   address,
   available,
+  settling = 0,
   parked,
   parkedSubs,
   accountId,
@@ -34,6 +35,7 @@ export function WithdrawModal({
   wallets: InstalledWallet[];
   address: string; // the wallet registered on the Strike account (where money goes)
   available: number; // free trading balance (USD), not in copies
+  settling?: number; // held by positions still closing after the copies stopped (withdrawable in a minute or two)
   parked: number; // left in older copies' sub-accounts: moved to the main account first when needed
   parkedSubs: { id: string; available: number }[];
   accountId: string; // the user's main Strike account
@@ -210,6 +212,12 @@ export function WithdrawModal({
                   </button>
                   {kind === "collateral" && <span className="text-xs text-muted">sUSDrf</span>}
                 </label>
+                {kind === "balance" && settling >= 1 && (
+                  <p className="mt-3 rounded-xl border border-gold/30 bg-gold/[0.06] px-3 py-2.5 text-xs leading-relaxed text-gold">
+                    {usd(settling)} more is still in positions Strike is closing after your copies stopped. It becomes withdrawable in a minute or two: close
+                    this and open it again to see the full amount.
+                  </p>
+                )}
                 {kind === "balance" && parked >= 0.01 && moved === null && (
                   <p className="mt-3 rounded-xl bg-white/[0.04] px-3 py-2.5 text-xs leading-relaxed text-soft">
                     {usd(parked)} of this is in a copy sub-account. If you withdraw more than {usd(available)}, Bolt moves it to your main account first: your wallet signs a free Strike login (no
