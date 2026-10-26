@@ -81,6 +81,10 @@ export function ImpactPage() {
   const liveSince = impact?.liveBot.since ?? live?.liveSince ?? null;
   const strikeVolume = coin?.copyTrade?.source === "strike" ? coin.copyTrade.volume : null;
   const strikeTrades = coin?.copyTrade?.source === "strike" ? coin.copyTrade.trades : null;
+  // The headline counts all copy trading Bolt brings to Strike: the live $BOLT bot plus Autopilot users (split below).
+  const both = (a: number | null | undefined, b: number | null | undefined) => (a == null && b == null ? null : (a ?? 0) + (b ?? 0));
+  const totalVolume = both(strikeVolume, impact?.autopilot.volumeUsd);
+  const totalTrades = both(strikeTrades, impact?.autopilot.orders);
 
   return (
     <main className="pb-24">
@@ -110,8 +114,8 @@ export function ImpactPage() {
           </FadeUp>
 
           <div className="mt-12 grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Kpi value={usd(strikeVolume)} label="Copy-trading volume on Strike" source="Strike · real trades" />
-            <Kpi value={num(strikeTrades)} label="Copy trades executed on Strike" source="Strike · real trades" />
+            <Kpi value={usd(totalVolume)} label="Copy-trading volume brought to Strike" source="Strike · real trades" />
+            <Kpi value={num(totalTrades)} label="Copy trades executed on Strike" source="Strike · real trades" />
             <Kpi value={num(coin?.holders)} label="$BOLT holders" source="Cardano · on-chain" />
             <Kpi value={`₳${compact(coin?.fees?.holders)}`} label="Fees paid to holders, in STRIKE" source="Solada · on-chain" />
           </div>
