@@ -20,6 +20,8 @@ import { verifySignData } from "./cose.ts";
 import { advanceMark, BETA_MAX_BUDGET_USD, copySpecs, describeRules, fitting, sharedRules, MIN_COPY_USD, pausedNow, perCopyUsd, pickTraders, RISK_LEVELS, realWorldShareOf, sanitizeRules, weekCurve, type AutoRules, type Candidate, type LiveMark, type PreviewTrader } from "./autopilot.ts";
 import { checkSession, decrypt, encrypt, loadAutoStore, logUser, newApiKeyPair, newSession, publicUser, saveAutoStore, type AutoUser, type Mode } from "./autopilotStore.ts";
 import { steelBuild, steelLogo, steelNotify, steelOn, steelQuote, steelTokens } from "./steelswap.ts";
+import { callReturn, closeCall, leaders, newCall, settle, type CallStore } from "./calls.ts";
+import { sizeFor, strikeMarketRules, strikeMarks, toStep } from "./strikeMarkets.ts";
 import { copiesNow, parkedOf, readFlows, syncUser } from "./autopilotEngine.ts";
 import Anthropic from "@anthropic-ai/sdk";
 import { copilotReply, type ChatTurn } from "./copilot.ts";
@@ -556,6 +558,19 @@ const AUTO = {
 const autoOn = () => Boolean(AUTO.builderCode && AUTO.secret.length >= 32);
 const autoNetwork = () => (AUTO.base.includes("testnet") ? "testnet" : "mainnet");
 const AUTO_FILE = `${DATA}/autopilot.json`;
+// Bolt Calls (the social layer): calls traders post, marked live on Strike's prices.
+const CALLS_FILE = `${DATA}/calls.json`;
+const callStore: CallStore = (() => {
+  try {
+    if (existsSync(CALLS_FILE)) return { calls: [], ...JSON.parse(readFileSync(CALLS_FILE, "utf8")) };
+  } catch {}
+  return { calls: [] };
+})();
+function saveCalls() {
+  if (callStore.calls.length > 5_000) callStore.calls.splice(0, callStore.calls.length - 5_000);
+  writeFileSync(`${CALLS_FILE}.tmp`, JSON.stringify(callStore));
+  renameSync(`${CALLS_FILE}.tmp`, CALLS_FILE);
+}
 const autoStore = loadAutoStore(AUTO_FILE);
 /** The bot's ranked traders for users' bots (best first), refreshed every cycle. */
 let autoPool: Candidate[] = [];
@@ -965,6 +980,21 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
   if (url.pathname === "/autopilot/earn") return { status: 200, data: { slp: await slpInfo(Date.now()) } };
   if (url.pathname === "/autopilot/impact") return { status: 200, data: impactSummary(Date.now()) };
   if (url.pathname === "/autopilot/marks") return { status: 200, data: { at: Date.now(), marks: Object.fromEntries(autoMarks) } };
+  // Bolt Calls feed: the latest calls with their live result on Strike's mark prices, and the callers ranked.
+  if (url.pathname === "/autopilot/calls" && req.method === "GET") {
+    const marks = await strikeMarks(Date.now()).catch(() => ({}) as Record<string, number>);
+    const recent = [...callStore.calls].sort((a, b) => b.at - a.at).slice(0, 100);
+    const names = new Map(callStore.calls.map((c) => [c.author, c.name ?? short(c.author)]));
+    return {
+      status: 200,
+      data: {
+        at: Date.now(),
+        marks,
+        calls: recent.map(({ author, ...c }) => ({ ...c, name: names.get(author), mark: marks[c.symbol] ?? null, ret: callReturn({ author, ...c }, marks[c.symbol]) })),
+        leaders: leaders(callStore.calls).slice(0, 10).map(({ author, ...l }) => ({ ...l, name: names.get(author) })),
+      },
+    };
+  }
   if (url.pathname === "/autopilot/trader") {
     const out = await traderCard(String(url.searchParams.get("lead") ?? ""));
     return out ? { status: 200, data: out } : { status: 404, data: { error: "That trader isn't one Bolt follows." } };
@@ -1088,6 +1118,55 @@ async function autopilotRoute(req: IncomingMessage, url: URL): Promise<{ status:
   const u = autoStore.users[stakeAddressOf(address) ?? address];
   if (!checkSession(u, String(body.token ?? ""), now)) return { status: 401, data: { error: "Connect your wallet again." } };
   const client = autoClient(u!);
+
+  // ---- Bolt Calls: post, close, see your own, tail (copy a call onto your Strike account) ----
+  if (url.pathname === "/autopilot/calls/new") {
+    const marks = await strikeMarks(now).catch(() => null);
+    if (!marks) return { status: 502, data: { error: "Strike's prices didn't load. Try again in a moment." } };
+    const c = newCall(callStore, body, u!.stake, marks, now);
+    if ("error" in c) return { status: 400, data: c };
+    c.name = short(u!.address);
+    callStore.calls.push(c);
+    saveCalls();
+    return { status: 200, data: { call: c } };
+  }
+  if (url.pathname === "/autopilot/calls/mine") return { status: 200, data: { ids: callStore.calls.filter((c) => c.author === u!.stake).map((c) => c.id) } };
+  if (url.pathname === "/autopilot/calls/close") {
+    const c = callStore.calls.find((x) => x.id === body.id && x.author === u!.stake);
+    if (!c || c.status !== "open") return { status: 404, data: { error: "That call is already closed." } };
+    const marks = await strikeMarks(now, 3_000).catch(() => null);
+    if (!marks || !closeCall(c, marks[c.symbol], now)) return { status: 502, data: { error: "Strike's price didn't load. Try again in a moment." } };
+    saveCalls();
+    return { status: 200, data: { call: c } };
+  }
+  if (url.pathname === "/autopilot/calls/tail") {
+    // Real orders: admins only until it's been tested with real money.
+    if (!authorized(req)) return { status: 403, data: { error: "Tailing calls opens soon." } };
+    const c = callStore.calls.find((x) => x.id === body.id);
+    if (!c || c.status !== "open") return { status: 404, data: { error: "That call has closed." } };
+    const usd = Math.floor(Number(body.usd) * 100) / 100;
+    if (!(usd >= 5 && usd <= AUTO.maxBudgetUsd)) return { status: 400, data: { error: `Tail with $5 to $${AUTO.maxBudgetUsd}.` } };
+    const [marks, rules, acct] = await Promise.all([strikeMarks(now, 3_000), strikeMarketRules(now), client.account().catch(() => null)]);
+    const mark = marks[c.symbol];
+    const r = rules[c.symbol];
+    if (!mark || !r) return { status: 502, data: { error: "Strike's prices didn't load. Try again in a moment." } };
+    if (acct && n(acct.available_balance) < usd) return { status: 400, data: { error: `You have $${n(acct.available_balance).toFixed(2)} free on Strike. Deposit more or tail with less.` } };
+    const sz = sizeFor(usd, c.leverage, mark, r);
+    if ("error" in sz) return { status: 400, data: sz };
+    // The call's own levels: tailing copies the trade, not a new one at today's price.
+    const px = (p: number | null) => (p ? toStep(p, r.tick) : null);
+    try {
+      await client.setLeverage(c.symbol, c.leverage);
+      await client.bracketOrder({ strategyId: `tail-${c.id}-${now.toString(36)}`, symbol: c.symbol, side: c.side === "long" ? "buy" : "sell", size: sz.size, tp: px(c.tp), sl: px(c.sl), builderFeeBps: AUTO.feeBps || undefined });
+    } catch (e) {
+      return { status: 502, data: { error: `Strike didn't take the order: ${e instanceof Error ? e.message.replace(/^Strike \S+ \S+ → /, "") : String(e)}` } };
+    }
+    c.tails++;
+    saveCalls();
+    logUser(u!, now, `Tailed ${c.name ?? "a"} call: ${c.side} ${c.symbol} at ${c.leverage}x with $${usd.toFixed(2)} (${sz.size} at about ${mark}${c.tp ? `, take-profit ${c.tp}` : ""}${c.sl ? `, stop ${c.sl}` : ""}).`);
+    saveAutoStore(AUTO_FILE, autoStore);
+    return { status: 200, data: { ok: true, size: sz.size, notional: sz.notional } };
+  }
 
   if (url.pathname === "/autopilot/live") {
     // Right before a stop: the copies' profit now (at most a few seconds old), so nobody stops on a stale number.
@@ -1739,6 +1818,15 @@ void refreshStrikeMarkets()
   })
   .catch(() => {});
 setInterval(() => void refreshAutoMarks().catch(() => {}), 60_000); // the live demo's marks
+// Bolt Calls: close open calls that crossed their take-profit or stop-loss (on Strike's mark prices).
+setInterval(() => {
+  if (!callStore.calls.some((c) => c.status === "open")) return;
+  strikeMarks(Date.now()).then((m) => {
+    let changed = false;
+    for (const c of callStore.calls) if (settle(c, m[c.symbol], Date.now())) changed = true;
+    if (changed) saveCalls();
+  }, () => {});
+}, 15_000);
 
 // First boot: show each lead's recent trades in the feed. Display only, because their
 // effect on our paper value was already counted by the earlier Strike-based marks.

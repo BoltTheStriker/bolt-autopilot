@@ -123,6 +123,36 @@ export function useAutopilotOpen(): boolean {
   return open;
 }
 
+/** A Bolt Call as the feed shows it: entry at Strike's mark price when posted, live result on today's mark. */
+export type BoltCall = {
+  id: string;
+  name?: string; // the caller, as their short wallet address
+  symbol: string;
+  side: "long" | "short";
+  leverage: number;
+  entry: number;
+  tp: number | null;
+  sl: number | null;
+  thesis: string;
+  at: number;
+  status: "open" | "tp" | "sl" | "closed";
+  exit?: number;
+  closedAt?: number;
+  tails: number;
+  mark: number | null;
+  ret: number | null; // return on margin: price move × leverage
+};
+export type CallLeader = { name?: string; calls: number; closed: number; wins: number; winRate: number | null; avgReturn: number | null };
+export type CallInput = { symbol: string; side: "long" | "short"; leverage: number; tpPct?: number | null; slPct?: number | null; thesis: string };
+
+export const calls = {
+  feed: () => call<{ at: number; marks: Record<string, number>; calls: BoltCall[]; leaders: CallLeader[] }>("calls"),
+  post: (s: Session, c: CallInput) => call<{ call: BoltCall }>("calls/new", { ...s, ...c }),
+  mine: (s: Session) => call<{ ids: string[] }>("calls/mine", s),
+  close: (s: Session, id: string) => call<{ call: BoltCall }>("calls/close", { ...s, id }),
+  tail: (s: Session, id: string, usd: number, adminKey: string) => call<{ ok: true; size: string; notional: number }>("calls/tail", { ...s, id, usd }, adminKey ? { "x-admin-key": adminKey } : {}),
+};
+
 export const autopilot = {
   status: () => call<AutoStatus>("status"),
   preview: () => call<{ at: number; traders: PreviewTrader[] }>("preview"),

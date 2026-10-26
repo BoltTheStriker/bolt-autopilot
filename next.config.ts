@@ -34,6 +34,7 @@ const nextConfig: NextConfig = {
         { source: "/impact", has: AUTOPILOT_HOST, destination: "/autopilot/impact" },
         { source: "/share", has: AUTOPILOT_HOST, destination: "/autopilot/share" },
         { source: "/wallet", has: AUTOPILOT_HOST, destination: "/autopilot/wallet" },
+        { source: "/calls", has: AUTOPILOT_HOST, destination: "/autopilot/calls" },
       ],
       afterFiles: [],
       fallback: [],

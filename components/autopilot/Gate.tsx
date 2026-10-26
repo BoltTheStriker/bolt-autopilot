@@ -12,10 +12,11 @@ import { WalletEgg } from "./WalletEgg";
 const AutopilotLanding = dynamic(() => import("./Landing").then((m) => m.AutopilotLanding), { ssr: false });
 const AutopilotApp = dynamic(() => import("./AutopilotApp").then((m) => m.AutopilotApp), { ssr: false });
 const ImpactPage = dynamic(() => import("./Impact").then((m) => m.ImpactPage), { ssr: false });
+const CallsPage = dynamic(() => import("./Calls").then((m) => m.CallsPage), { ssr: false });
 
 /** Until Autopilot opens, only a verified admin can see its pages. In teaser mode the landing page is public
  *  and the app and impact page send everyone else to it; otherwise they go to the homepage. */
-export function AutopilotGate({ page }: { page: "landing" | "app" | "impact" }) {
+export function AutopilotGate({ page }: { page: "landing" | "app" | "impact" | "calls" }) {
   const router = useRouter();
   const teaserLanding = site.autopilotTeaser && page === "landing";
   const [ok, setOk] = useState(teaserLanding);
@@ -37,7 +38,7 @@ export function AutopilotGate({ page }: { page: "landing" | "app" | "impact" }) 
   if (!ok) return <main className="min-h-screen" />;
   return (
     <>
-      {page === "app" ? <AutopilotApp /> : page === "impact" ? <ImpactPage /> : <AutopilotLanding />}
+      {page === "app" ? <AutopilotApp /> : page === "impact" ? <ImpactPage /> : page === "calls" ? <CallsPage /> : <AutopilotLanding />}
       <WalletEgg />
     </>
   );

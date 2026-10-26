@@ -52,8 +52,9 @@ export class StrikeClient {
     this.key = createPrivateKey({ key: der, format: "der", type: "pkcs8" });
   }
 
-  /** Signed request. Message: METHOD:PATH(+query):TIMESTAMP:NONCE:sha256hex(body). */
-  async request<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<{ status: number; data: T }> {
+  /** Signed request. Message: METHOD:PATH(+query):TIMESTAMP:NONCE:sha256hex(body). Extra headers (such as the builder fee)
+   *  aren't part of the signature. */
+  async request<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<{ status: number; data: T }> {
     const bodyStr = body === undefined ? "" : JSON.stringify(body);
     const ts = Math.floor(Date.now() / 1000).toString();
     const nonce = randomUUID();
@@ -68,6 +69,7 @@ export class StrikeClient {
         "X-API-Wallet-Nonce": nonce,
         ...(bodyStr ? { "content-type": "application/json" } : {}),
         accept: "application/json",
+        ...extraHeaders,
       },
       body: bodyStr || undefined,
       signal: AbortSignal.timeout(20_000),
@@ -79,6 +81,31 @@ export class StrikeClient {
     } catch {}
     if (!res.ok) throw new Error(`Strike ${method} ${path} → ${res.status} ${typeof data === "string" ? data : JSON.stringify(data)}`.slice(0, 400));
     return { status: res.status, data: data as T };
+  }
+
+  /** Leverage for new positions in one market (existing positions keep theirs). */
+  setLeverage(symbol: string, leverage: number) {
+    return this.request<{ leverage: number; symbol: string }>("POST", "/v2/leverage", { symbol, leverage: Math.round(leverage) }).then((r) => r.data);
+  }
+
+  /** A market entry with its take-profit and stop-loss in one bracket order. `builderFeeBps` adds Bolt's fee on the order
+   *  (it must not exceed what the user approved when connecting). */
+  bracketOrder(o: { strategyId: string; symbol: string; side: "buy" | "sell"; size: string; tp?: string | null; sl?: string | null; builderFeeBps?: number }) {
+    // The legs close the position: Strike gives them the side opposite the primary order.
+    return this.request<Record<string, unknown>>(
+      "POST",
+      "/v2/order/strategy",
+      {
+        strategy_id: o.strategyId,
+        symbol: o.symbol,
+        side: o.side,
+        type: "market",
+        size: o.size,
+        ...(o.tp ? { tp_order: { type: "take_profit", size: o.size, stop_price: o.tp, working_type: "mark_price" } } : {}),
+        ...(o.sl ? { sl_order: { type: "stop", size: o.size, stop_price: o.sl, working_type: "mark_price" } } : {}),
+      },
+      o.builderFeeBps ? { "X-Builder-Fee-Bps": String(Math.round(o.builderFeeBps)) } : {},
+    ).then((r) => r.data);
   }
 
   account() {
