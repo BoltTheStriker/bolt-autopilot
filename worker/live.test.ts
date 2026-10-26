@@ -213,3 +213,23 @@ test("profit lock: banks the bold copy at +6%, not before; dry run only logs; th
   ctl.copies = [{ lead: "0xbold", amount: 175, pnl: 50 }];
   assert.equal(await lockProfit(ctl, client, "0xbold"), null); // off
 });
+
+test("sync: a budget above what the account holds sizes the new copy to the free balance, not past it", async () => {
+  const kept = [sub("s1", "0xa", { copy_amount: "175" }), sub("s2", "0xb", { copy_amount: "175" })];
+  const { client, calls } = fakeClient(kept);
+  (client as unknown as { account: () => Promise<Record<string, string>> }).account = async () => ({ available_balance: "171.49", margin_balance: "521.49" });
+  const ctl = { ...defaultCtl(533), mode: "live" as const, managed: { "0xa": "s1", "0xb": "s2" } };
+  await sync(ctl, client, desired, { ...cfg, minCopyUsd: 100 });
+  // $533 − $350 kept would ask for $183, more than the $171.49 free (Strike refuses it): it uses what's free, a dollar kept.
+  assert.deepEqual(calls, ["subscribe 0xc 170.49"]);
+});
+
+test("sync: the same error every few minutes is logged once", async () => {
+  const { client } = fakeClient([]);
+  (client as unknown as { subscribe: () => Promise<never> }).subscribe = async () => {
+    throw new Error('Strike POST /v2/copy/subscribe → 400 {"error":"invalid inputs"}');
+  };
+  const ctl = { ...defaultCtl(300), mode: "live" as const };
+  for (let i = 0; i < 3; i++) await sync(ctl, client, desired, cfg);
+  assert.equal(ctl.log.filter((l) => l.text.startsWith("Error:")).length, 1);
+});

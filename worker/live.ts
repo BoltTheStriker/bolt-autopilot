@@ -23,7 +23,7 @@ export type LiveCtl = {
   log: { at: number; text: string }[];
   /** netIn: money moved into the bot's account minus money moved out (deposits, withdrawals and
    *  sub-account transfers), so profit = equity − netIn whatever else happens on the wallet. */
-  account?: { subs: number; allocated: number; pnl: number; at: number; equity?: number; netIn?: number; flowsAt?: number };
+  account?: { subs: number; allocated: number; pnl: number; at: number; equity?: number; netIn?: number; flowsAt?: number; available?: number };
   /** The bot's real copies on Strike at the last sync, for the public page. */
   copies?: { lead: string; amount: number; pnl: number; since?: number; positions?: { market: string; long: boolean; entry: number; mark: number; pnl: number }[] }[];
   /** When live trading was first switched on. */
@@ -153,7 +153,7 @@ async function readAccount(ctl: LiveCtl, client: StrikeClient, cfg: { dailyLossP
       flowsAt = Date.now();
     }
   }
-  ctl.account = { subs: ours.length, allocated, pnl, at: Date.now(), equity, netIn, flowsAt };
+  ctl.account = { subs: ours.length, allocated, pnl, at: Date.now(), equity, netIn, flowsAt, available: acct ? n(acct.available_balance) : undefined };
   ctl.copies = ours.map((s) => ({
     lead: s.lead_account_id,
     amount: n(s.copy_amount),
@@ -211,8 +211,9 @@ export async function lockProfit(ctl: LiveCtl, client: StrikeClient | null, lead
     log(ctl, `[live] ${what}`);
     return c.pnl;
   } catch (e) {
-    ctl.lastError = e instanceof Error ? e.message : String(e);
-    log(ctl, `Error: ${ctl.lastError}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg !== ctl.lastError) log(ctl, `Error: ${msg}`); // the same error every few minutes would push everything else out of the log
+    ctl.lastError = msg;
     return null;
   }
 }
@@ -233,7 +234,11 @@ export async function sync(
     const active = await readAccount(ctl, client, cfg);
     if (!active) return; // kill switch fired
 
-    const actions = plan({ desired, managed: ctl.managed, active, budgetUsd: ctl.budgetUsd, stopLossPct: cfg.stopLossPct, minCopyUsd: cfg.minCopyUsd, maxCopies: cfg.maxCopies });
+    // What the account can really fund: the copies it keeps plus Strike's free balance (a dollar kept for fees). After
+    // losses or a withdrawal the budget can be more than that, and Strike then refuses every new copy ("invalid inputs").
+    const free = ctl.account?.available;
+    const budgetUsd = free === undefined ? ctl.budgetUsd : Math.min(ctl.budgetUsd, (ctl.account?.allocated ?? 0) + Math.max(0, free - 1));
+    const actions = plan({ desired, managed: ctl.managed, active, budgetUsd, stopLossPct: cfg.stopLossPct, minCopyUsd: cfg.minCopyUsd, maxCopies: cfg.maxCopies });
     for (const a of actions) {
       const what = a.type === "subscribe" ? `copy ${short(a.lead)} with $${a.amount} (Strike stop-loss $${a.stopLoss})` : `stop ${short(a.lead)} (${a.reason})`;
       if (ctl.mode === "dry") {
@@ -252,8 +257,9 @@ export async function sync(
     ctl.lastSyncAt = Date.now();
     ctl.lastError = undefined;
   } catch (e) {
-    ctl.lastError = e instanceof Error ? e.message : String(e);
-    log(ctl, `Error: ${ctl.lastError}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    if (msg !== ctl.lastError) log(ctl, `Error: ${msg}`); // the same error every few minutes would push everything else out of the log
+    ctl.lastError = msg;
   }
 }
 
