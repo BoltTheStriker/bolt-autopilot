@@ -112,11 +112,19 @@ export function RewardsChecker() {
                 <Tile label="Next payout in" value={result.nextPayoutAtMs ? untilLabel(result.nextPayoutAtMs) : "—"} />
               </div>
               <div className={`mt-3 rounded-xl p-4 ${result.held > 0 ? "bg-mint/10" : "bg-white/[0.04]"}`}>
-                {result.held > 0 ? (
+                {result.held > 0 && result.earningAda === null ? (
+                  <>
+                    <p className="text-sm text-soft">This wallet is earning STRIKE from the holder pot.</p>
+                    <a href={site.token.launchpad.url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-mint hover:underline">
+                      See and claim your STRIKE on Solada →
+                    </a>
+                    <p className="mt-1.5 text-[11px] text-white/40">Solada now shows each wallet&apos;s rewards only after you sign in there with that wallet.</p>
+                  </>
+                ) : result.held > 0 ? (
                   <>
                     <p className="text-xs text-muted">Earning this round</p>
                     <p className="mt-1 flex items-center gap-2 font-display text-3xl font-bold">
-                      <StrikeIcon size={26} />₳{fmt2(result.earningAda)}
+                      <StrikeIcon size={26} />₳{fmt2(result.earningAda ?? 0)}
                     </p>
                     <p className="mt-1 text-xs text-muted">worth of {result.paidIn}, paid at the next payout</p>
                   </>
@@ -124,7 +132,7 @@ export function RewardsChecker() {
                   <p className="text-sm text-soft">This wallet doesn&apos;t hold ${site.ticker} yet. Buy on Solada to start earning STRIKE.</p>
                 )}
               </div>
-              {result.strike.claimed + result.strike.unclaimed > 0 && (
+              {result.strike && result.strike.claimed + result.strike.unclaimed > 0 && (
                 <div className="mt-3 rounded-xl bg-white/[0.04] p-4">
                   <p className="text-xs text-muted">Earned so far</p>
                   <p className="mt-1 flex items-center gap-2 font-display text-2xl font-bold">
@@ -139,7 +147,7 @@ export function RewardsChecker() {
                   )}
                 </div>
               )}
-              {result.strike.unclaimed > 0 && (
+              {result.strike && result.strike.unclaimed > 0 && (
                 <a href={site.token.launchpad.url} target="_blank" rel="noreferrer" className="mt-3 block rounded-xl bg-white/[0.04] p-3 text-sm text-soft hover:text-white">
                   <span className="font-mono text-mint">{fmt2(result.strike.unclaimed)} STRIKE</span> ready to claim on Solada →
                 </a>

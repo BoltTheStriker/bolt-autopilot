@@ -53,7 +53,7 @@ export type CoinSnapshot = {
    * is the creator's. Cardano-curve coins earn in ADA, Pump-side coins in USDC.
    */
   fees: { currency: "ADA" | "USDC"; total: number; holders: number; creator: number };
-  creator: { address: string; claimedAda: number };
+  creator: { address: string; claimedAda: number | null }; // null: Solada no longer shows it publicly
   /** The wallet that funds the copy-trade (config override, else the deployer), balance from Koios. */
   teamWallet: { address: string; ada: number | null };
   /** The team's Strike copy-trade account (USD), or the bot's paper portfolio until that account exists. */
@@ -92,20 +92,24 @@ export async function getCoin(): Promise<CoinSnapshot> {
   const id = site.solada.id;
   if (!id) return await preLaunchCoin();
 
-  const [l, rewards, market, c1m, c5m, c1h] = await Promise.all([
-    // The single-coin endpoint also answers for drafts, unlike the public /api/launches list.
-    solada<Launch>(`/api/launches/${encodeURIComponent(id)}`),
+  const coinPath = `/api/coins/${encodeURIComponent(id)}`;
+  const [l, rewards, c1m, c5m, c1h] = await Promise.all([
+    solada<Launch>(coinPath),
     solada<Record<string, unknown>>(`/api/holder-rewards?id=${encodeURIComponent(id)}`),
-    solada<{ quotes?: Record<string, Record<string, unknown>> }>("/api/market"),
-    ...[60, 300, 3600].map((sec) =>
-      solada<Candles>(`/api/curve/candles?id=${encodeURIComponent(id)}&seconds=${sec}`),
-    ),
+    ...[60, 300, 3600].map((sec) => solada<Candles>(`${coinPath}/candles?seconds=${sec}`)),
   ]);
-  // Until Solada opens trading (status LIVE) the site keeps its pre-launch states, then
+  // Until Solada opens trading (status live) the site keeps its pre-launch states, then
   // switches over by itself on the next refresh: no redeploy needed at launch.
-  if (l?.status !== "LIVE") return await preLaunchCoin();
+  if (String(l?.status ?? "").toLowerCase() !== "live") return await preLaunchCoin();
   const teamAddress = site.wallets.copyTrade || String(l?.launcherAddress ?? "");
-  const curve = l?.curve ?? null;
+  const raw = l?.curve ?? null;
+  // Since Solada's AWS move (2026-10-27) the curve reports `state` and ADA amounts; older fields are kept as fallbacks.
+  const curve: (Record<string, unknown> & { graduated: boolean; volumeAda: number; supply: number }) | null = raw && {
+    ...raw,
+    graduated: raw.state === "graduated" || Boolean(raw.graduated),
+    volumeAda: raw.volumeAda !== undefined ? n(raw.volumeAda) : n(raw.volumeLovelace) / 1e6,
+    supply: n((raw.reserves as Record<string, unknown> | undefined)?.supply ?? l?.totalSupply),
+  };
   const policy = String(l?.policyId ?? ""), assetHex = String(l?.assetName ?? "");
   // Everything below is independent, so it's fetched in parallel: one slow provider costs one
   // timeout, not a timeout per step. (Holders only waits for the pool, to exclude its address.)
@@ -119,30 +123,32 @@ export async function getCoin(): Promise<CoinSnapshot> {
     teamCopyTradeOrSimulation(teamAddress),
     burnsOnChain(String(l?.policyId ?? site.token.policyId), String(l?.assetName ?? site.token.assetNameHex)),
   ]);
-  const supply = n(l?.totalSupply) / 10 ** site.token.decimals;
-  const quote = market?.quotes?.[id];
+  const supply = (curve?.supply || site.token.totalSupply * 10 ** site.token.decimals) / 10 ** site.token.decimals;
+  const units = Array.isArray(l?.rewardUnits) ? (l.rewardUnits as unknown[]) : [l?.rewardUnit];
+  // Lifetime fees are now only shown to the launcher wallet; keep the last figure Solada published until it's public again.
+  const earnedAda = n(l?.earnedLovelace) / 1e6 || site.solada.lastKnownFeesAda;
 
   return {
     launched: true,
     id,
     ticker: String(l?.ticker ?? site.ticker),
-    chain: String(l?.chain ?? (quote ? "pump" : "cardano")),
-    priceAda: pool ? pool.priceAda : curve && !curve.graduated ? n(curve.priceAda) : null,
-    marketCapAda: pool ? pool.priceAda * supply : curve && !curve.graduated ? n(curve.marketCapLovelace) / 1e6 : null,
-    marketCapUsd: quote ? n(quote.marketCapUsd) : null,
-    ...volumeFigures(curve ? n(curve.volumeLovelace) / 1e6 : null, dex),
-    trades: curve ? n(curve.trades) : quote ? n(quote.trades24h) : null,
+    chain: l?.pumpMint ? "pump" : "cardano",
+    priceAda: pool ? pool.priceAda : n(l?.priceAda) || null,
+    marketCapAda: pool ? pool.priceAda * supply : n(l?.marketCapAda) || null,
+    marketCapUsd: n(l?.marketCapUsd) || null,
+    ...volumeFigures(curve ? curve.volumeAda : null, dex),
+    trades: curve ? n(curve.trades) : null,
     // Solada's reward counter only updates at its daily snapshot; count holders on-chain instead.
-    holders: holders ?? n(rewards?.holders ?? quote?.holders),
-    progressPct: curve ? n(curve.progressBps) / 100 : n(quote?.pumpProgressBps) / 100,
+    holders: holders ?? n(l?.holders ?? rewards?.holders),
+    progressPct: n(curve?.progressBps) / 100,
     graduated: Boolean(curve?.graduated),
     holderSharePct: n(l?.holderShareBps ?? rewards?.holderShareBps) / 100,
-    paidInStrike: l?.rewardUnit === STRIKE_UNIT,
+    paidInStrike: units.includes(STRIKE_UNIT),
     pot: { ada: n(rewards?.potLovelace) / 1e6, usdc: n(rewards?.potUsdc) / 1e6 },
     lastPayoutAt: (rewards?.lastPayoutAt as string) ?? null,
     lastSnapshotAt: (rewards?.lastSnapshotAt as string) ?? null,
-    fees: splitFees(n(l?.earnedLovelace) / 1e6, n(l?.earnedUsdc) / 1e6, n(l?.holderShareBps) / 10_000),
-    creator: { address: String(l?.launcherAddress ?? ""), claimedAda: n(l?.claimLovelace) / 1e6 },
+    fees: splitFees(earnedAda, n(l?.earnedUsdc) / 1e6, n(l?.holderShareBps) / 10_000),
+    creator: { address: String(l?.launcherAddress ?? ""), claimedAda: l?.claimLovelace === undefined ? null : n(l.claimLovelace) / 1e6 },
     teamWallet: { address: teamAddress, ada: teamAda },
     copyTrade,
     ...burns,
@@ -302,10 +308,11 @@ export class PreLaunchError extends Error {
 
 export type WalletRewards = {
   held: number; // tokens
-  earningAda: number; // accrued this period, converted at payout
+  /** Accrued this period, converted at payout. Null when Solada only shows it to the wallet signed in there. */
+  earningAda: number | null;
   nextPayoutAtMs: number | null;
   paidIn: string;
-  /** STRIKE this wallet has earned, from Solada's per-reward-token breakdown. */
+  /** STRIKE this wallet has earned, from Solada's per-reward-token breakdown (null when Solada needs a sign-in). */
   strike: {
     claimed: number; // STRIKE already claimed
     unclaimed: number; // STRIKE ready to claim
@@ -313,7 +320,7 @@ export type WalletRewards = {
     unclaimedAda: number; // ADA value now
     /** Other coins whose rewards are also paid in STRIKE to this wallet (included in the totals). */
     otherSources: string[];
-  };
+  } | null;
 };
 
 type RewardToken = { unit?: string; tokens?: string; claimedTokens?: string; valueLovelace?: string; claimedValueLovelace?: string; decimals?: number; from?: string[] };
@@ -327,6 +334,9 @@ export async function getWalletRewards(address: string): Promise<WalletRewards> 
     solada<{ coins?: Record<string, unknown>[] }>(`/api/holder-earning?address=${a}`),
     solada<{ coins?: Record<string, unknown>[]; tokens?: RewardToken[] }>(`/api/my-rewards?address=${a}`),
   ]);
+  // Since Solada's AWS move both answer only the wallet signed in on solada.fun: show what the chain says and send
+  // people to Solada for their rewards.
+  if (!earning && !mine) return chainOnlyRewards(address, id);
   const e = earning?.coins?.find((c) => c.id === id);
   const m = mine?.coins?.find((c) => c.id === id);
   const decimals = n(e?.decimals ?? site.token.decimals);
@@ -346,6 +356,30 @@ export async function getWalletRewards(address: string): Promise<WalletRewards> 
       unclaimedAda: n(t?.valueLovelace) / 1e6,
       otherSources: (t?.from ?? []).filter((f) => f.toUpperCase() !== site.ticker.toUpperCase()),
     },
+  };
+}
+
+/** The wallet's $BOLT from Koios and the next daily payout from the coin's last one; rewards themselves stay on Solada. */
+async function chainOnlyRewards(address: string, id: string): Promise<WalletRewards> {
+  const [assets, rewards] = await Promise.all([
+    fetchT("https://api.koios.rest/api/v1/address_assets", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ _addresses: [address] }),
+    })
+      .then((r) => (r.ok ? (r.json() as Promise<{ policy_id: string; asset_name: string; quantity: string }[]>) : null))
+      .catch(() => null),
+    solada<{ lastPayoutAt?: string }>(`/api/holder-rewards?id=${encodeURIComponent(id)}`),
+  ]);
+  if (!assets) throw new Error("Couldn't read this wallet from the chain right now. Try again in a minute.");
+  const mine = assets.find((x) => x.policy_id === site.token.policyId && x.asset_name === site.token.assetNameHex);
+  const next = Date.parse(rewards?.lastPayoutAt ?? "") + 86_400_000;
+  return {
+    held: n(mine?.quantity) / 10 ** site.token.decimals,
+    earningAda: null,
+    nextPayoutAtMs: next > Date.now() ? next : null,
+    paidIn: site.strike.ticker,
+    strike: null,
   };
 }
 

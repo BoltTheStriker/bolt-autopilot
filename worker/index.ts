@@ -503,15 +503,15 @@ async function syncContest(now: number) {
   try {
     if (s.phase !== "upcoming" && contest.syncedTo < c.end + 10 * 60_000) {
       const from = Math.max(contest.syncedTo, c.start);
-      let before: number | null = null;
+      // The coin's own feed (since Solada's AWS move the old /api/trades?id= ignores the id); pages back by time and seq.
+      let before: Record<string, unknown> | undefined;
       for (let page = 0; page < 60; page++) {
-        const url: string = `https://www.solada.fun/api/trades?id=${encodeURIComponent(SOLADA_ID)}${before ? `&before=${before}` : ""}`;
+        const url: string = `https://www.solada.fun/api/coins/${encodeURIComponent(SOLADA_ID)}/trades?limit=100${before ? `&before=${before.atMs}&beforeSeq=${before.seq}` : ""}`;
         const r: { trades?: Record<string, unknown>[]; more?: boolean } = await json(url);
         const trades: Trade[] = (r.trades ?? []).map(parseTrade).filter((t): t is Trade => t !== null);
         addTrades(contest, trades);
-        const oldest: number | undefined = trades.at(-1)?.atMs;
-        if (!r.more || oldest === undefined || oldest <= from) break;
-        before = oldest;
+        before = r.trades?.at(-1);
+        if (!r.more || !before || Number(before.atMs) <= from) break;
       }
     }
     if (now - contestChecksAt > 10 * 60_000) {

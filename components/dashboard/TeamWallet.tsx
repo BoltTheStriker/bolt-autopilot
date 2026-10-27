@@ -27,7 +27,7 @@ export function TeamWallet() {
         </div>
         <div className="rounded-xl bg-white/[0.04] p-3">
           <p className="text-[11px] text-muted">Claimed from Solada</p>
-          <p className="mt-0.5 truncate font-mono text-base">{coin?.launched ? `₳${fmt2(coin.creator.claimedAda)}` : "—"}</p>
+          <p className="mt-0.5 truncate font-mono text-base">{coin?.launched && coin.creator.claimedAda !== null ? `₳${fmt2(coin.creator.claimedAda)}` : "—"}</p>
         </div>
         <div className="rounded-xl bg-white/[0.04] p-3">
           <p className="text-[11px] text-muted">Wallet balance</p>

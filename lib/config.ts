@@ -19,7 +19,12 @@ export const site = {
   },
 
   /** The coin's id in Solada's API (its original solada.fun/coin/<id>; the public page now uses the policy id). Empty = pre-launch. */
-  solada: { id: "draft-bolt" },
+  solada: {
+    id: "draft-bolt",
+    /** The coin's lifetime fees (ADA) as last read from Solada, 2026-10-23. Since Solada's AWS move (2026-10-27) only the
+     *  launcher wallet, signed in, can read the live total; update this from solada.fun's Earn page when you check it. */
+    lastKnownFeesAda: 16_973.76,
+  },
 
   /** Settings you choose when launching on Solada. */
 

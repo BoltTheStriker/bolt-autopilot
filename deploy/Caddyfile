@@ -1,7 +1,0 @@
-# HTTPS for the worker. Point an A record for api.boltstriker.io at the server first; Caddy then
-# gets the certificate from Let's Encrypt and renews it by itself.
-api.boltstriker.io {
-	encode gzip
-	header Strict-Transport-Security "max-age=31536000"
-	reverse_proxy bolt-worker:8080
-}

@@ -183,8 +183,15 @@ export function BoltRewards({ address }: { address?: string }) {
         <h4 className="mt-1 font-display text-lg font-semibold">${site.ticker} holder rewards, paid in STRIKE</h4>
         {holds && mine ? (
           <p className="mt-1.5 text-sm text-soft">
-            You hold <span className="font-mono text-white">{compact(mine.held)}</span> ${site.ticker}: earning <span className="font-mono text-mint">₳{mine.earningAda.toFixed(2)}</span> this round
-            {mine.strike.unclaimed > 0 && (
+            You hold <span className="font-mono text-white">{compact(mine.held)}</span> ${site.ticker}
+            {mine.earningAda === null ? (
+              <>: earning STRIKE every day (see and claim it on Solada)</>
+            ) : (
+              <>
+                : earning <span className="font-mono text-mint">₳{mine.earningAda.toFixed(2)}</span> this round
+              </>
+            )}
+            {mine.strike && mine.strike.unclaimed > 0 && (
               <>
                 , and <span className="font-mono text-mint">{compact(mine.strike.unclaimed)} STRIKE</span> ready to claim
               </>
